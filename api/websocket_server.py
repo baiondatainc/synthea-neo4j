@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse
 from graph.connection import Neo4jConnection
 from ingest.schema import create_schema
 from qa.chain import stream_qa_response
+from api.openai_compat import router as openai_router
 from config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,8 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+app.include_router(openai_router)
 
 app.add_middleware(
     CORSMiddleware,

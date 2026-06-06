@@ -32,6 +32,17 @@ GRAPH_SCHEMA = """
 - (Procedure)-[:PERFORMED_IN]->(Encounter)
 - (Observation)-[:RECORDED_IN]->(Encounter)
 
+### Cypher Rules — ALWAYS FOLLOW THESE
+
+1. NEVER use CAST() — Neo4j does not support it. Use toFloat() instead.
+2. NEVER use COUNT() without an argument — always COUNT(e) or COUNT(DISTINCT p).
+3. NEVER use WITH before aggregation without re-matching — always MATCH first then aggregate.
+4. For percentages use: toFloat(count(x)) / toFloat(total) * 100
+5. For breakdowns/distributions always use simple MATCH + RETURN + count():
+   MATCH (e:Encounter) RETURN e.encounterclass AS type, count(e) AS total ORDER BY total DESC
+6. NEVER use string concatenation with + in RETURN — return separate columns instead.
+7. Always alias every returned column: count(e) AS total, NOT just count(e).
+
 ### Example Cypher Queries
 
 1. Patients with diabetes:
@@ -44,11 +55,32 @@ RETURN p.first, p.last, p.gender, c.description LIMIT 10
 2. Most prescribed medications:
 ```cypher
 MATCH (p:Patient)-[:PRESCRIBED]->(m:Medication)
-RETURN m.description, count(p) AS patients
+RETURN m.description AS medication, count(p) AS patients
 ORDER BY patients DESC LIMIT 10
 ```
 
-3. Patients with both diabetes and hypertension:
+3. Breakdown of encounter types:
+```cypher
+MATCH (e:Encounter)
+RETURN e.encounterclass AS encounter_type, count(e) AS total
+ORDER BY total DESC
+```
+
+4. Patient gender distribution:
+```cypher
+MATCH (p:Patient)
+RETURN p.gender AS gender, count(p) AS total
+ORDER BY total DESC
+```
+
+5. Average cost by encounter class:
+```cypher
+MATCH (e:Encounter)
+RETURN e.encounterclass AS encounter_class, avg(e.total_claim_cost) AS avg_cost, count(e) AS total
+ORDER BY avg_cost DESC
+```
+
+6. Patients with both diabetes and hypertension:
 ```cypher
 MATCH (p:Patient)-[:HAS_CONDITION]->(c1:Condition),
       (p)-[:HAS_CONDITION]->(c2:Condition)
@@ -57,28 +89,35 @@ WHERE toLower(c1.description) CONTAINS 'diabetes'
 RETURN p.first, p.last LIMIT 10
 ```
 
-4. Emergency encounters this year:
-```cypher
-MATCH (p:Patient)-[:HAS_ENCOUNTER]->(e:Encounter)
-WHERE e.encounterclass = 'emergency'
-  AND e.start STARTS WITH '2024'
-RETURN p.first, p.last, e.start, e.description LIMIT 20
-```
-
-5. Average cost by encounter class:
-```cypher
-MATCH (e:Encounter)
-RETURN e.encounterclass, avg(e.total_claim_cost) AS avg_cost, count(e) AS total
-ORDER BY avg_cost DESC
-```
-
-6. Medications for patients with a specific condition:
+7. Medications for patients with a specific condition:
 ```cypher
 MATCH (p:Patient)-[:HAS_CONDITION]->(c:Condition),
       (p)-[:PRESCRIBED]->(m:Medication)
 WHERE toLower(c.description) CONTAINS 'asthma'
-RETURN m.description, count(distinct p) AS patients
+RETURN m.description AS medication, count(distinct p) AS patients
 ORDER BY patients DESC LIMIT 10
+```
+
+8. Top procedures by patient count:
+```cypher
+MATCH (p:Patient)-[:HAD_PROCEDURE]->(pr:Procedure)
+RETURN pr.description AS procedure, count(p) AS patients
+ORDER BY patients DESC LIMIT 10
+```
+
+9. Emergency encounters:
+```cypher
+MATCH (p:Patient)-[:HAS_ENCOUNTER]->(e:Encounter)
+WHERE e.encounterclass = 'emergency'
+RETURN p.first AS first_name, p.last AS last_name, e.start AS date, e.description AS reason
+ORDER BY e.start DESC LIMIT 20
+```
+
+10. Observation categories:
+```cypher
+MATCH (o:Observation)
+RETURN o.category AS category, count(o) AS total
+ORDER BY total DESC LIMIT 10
 ```
 """
 
@@ -89,15 +128,10 @@ You have access to a Neo4j graph database containing synthetic patient data from
 
 When answering questions:
 1. Generate precise Cypher queries using ONLY the schema above
-2. Use MERGE patterns carefully — always match on unique identifiers
-3. Use toLower() for string comparisons on descriptions
-4. Always include LIMIT clauses (default 25) unless counting
-5. Return meaningful property names, not just IDs
-6. After showing results, provide a clear plain-English interpretation
-7. If a question is ambiguous, state your assumptions
-
-Always structure your response as:
-- **Cypher Query** (the query you ran)
-- **Results** (the data returned)
-- **Interpretation** (plain English summary)
+2. NEVER use CAST(), always use toFloat() for numeric conversion
+3. NEVER use COUNT() without an argument
+4. Use toLower() for string comparisons on descriptions
+5. Always alias every returned column
+6. Return separate columns, never concatenate strings in RETURN
+7. Always include LIMIT 25 unless the query is a pure aggregation
 """
