@@ -45,4 +45,5 @@ frontend/dist/
 
 # Docker
 docker-compose.override.yml
-
+.venv/
+.env
