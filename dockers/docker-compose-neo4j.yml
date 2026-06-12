@@ -1,40 +1,58 @@
 services:
   neo4j:
-    image: neo4j:5.26-community          # pin version — never use :latest in dev
-    container_name: neo4j_rp             # descriptive name for your RP project
+    image: neo4j:5.26-community
+    container_name: neo4j_rp
     restart: unless-stopped
     ports:
-      - "7474:7474"                       # Browser UI
-      - "7687:7687"                       # Bolt (LangChain connects here)
+      - "7474:7474"
+      - "7687:7687"
     environment:
       - NEO4J_AUTH=neo4j/rp_strong_pass_2025
-      # Memory — tuned for 62GB server
-      # Breakdown: 8G heap + 16G pagecache = 24G Neo4j
-      # Remaining ~38G free for OS, Python/FastAPI, LibreChat, Ollama
+
+      # ── Memory — 32GB total for Neo4j on 62GB server ──────────────────────
+      # heap:      8GB  — JVM query execution, aggregations, sorting
+      # pagecache: 24GB — entire RP graph fits in RAM (11GB data + headroom)
+      # remaining: 30GB free for OS, Python ingestion, LibreChat, Ollama
       - NEO4J_server_memory_heap_initial__size=2G
       - NEO4J_server_memory_heap_max__size=8G
-      - NEO4J_server_memory_pagecache_size=16G
-      # Allow CSV import from /import folder
-      - NEO4J_dbms_security_allow__csv__import__from__file__urls=true
-      # APOC plugin (needed for advanced graph operations)
+      - NEO4J_server_memory_pagecache__size=24G
+
+      # Disable strict config validation (prevents boot failure on minor setting issues)
+      - NEO4J_server_config_strict__validation_enabled=false
+
+      # ── Transaction memory — critical for large batch ingestion ───────────
+      # Each parallel worker needs transaction memory for 5000-row batches
+      - NEO4J_db_memory_transaction_total_max=4G
+      - NEO4J_db_memory_transaction_max=1G
+
+      # ── Connection pool — support 4 parallel ingestion workers ────────────
+      - NEO4J_dbms_connector_bolt_thread__pool__min__size=4
+      - NEO4J_dbms_connector_bolt_thread__pool__max__size=40
+
+      # ── Plugins ────────────────────────────────────────────────────────────
       - NEO4J_PLUGINS=["apoc"]
-      # Graph Data Science plugin (needed for PageRank, Louvain etc)
-      # Uncomment when you're ready for GDS algorithms
-      # - NEO4J_PLUGINS=["apoc","graph-data-science"]
-      # Bolt connector settings
-      - NEO4J_dbms_connector_bolt_listen__address=0.0.0.0:7687
-      - NEO4J_dbms_connector_http_listen__address=0.0.0.0:7474
-      # Allow LangChain / Python driver connections from host
       - NEO4J_dbms_security_procedures_unrestricted=apoc.*,gds.*
       - NEO4J_dbms_security_procedures_allowlist=apoc.*,gds.*
+
+      # ── CSV import ─────────────────────────────────────────────────────────
+      - NEO4J_dbms_security_allow__csv__import__from__file__urls=true
+
+      # ── Bolt / HTTP listeners ──────────────────────────────────────────────
+      - NEO4J_dbms_connector_bolt_listen__address=0.0.0.0:7687
+      - NEO4J_dbms_connector_http_listen__address=0.0.0.0:7474
+
+      # ── Checkpoint — flush dirty pages less often during bulk load ─────────
+      - NEO4J_db_checkpoint_interval_time=5m
+      - NEO4J_db_checkpoint_interval_tx=100000
+
     volumes:
       - neo4j_data:/data
       - neo4j_logs:/logs
-      - ./import:/var/lib/neo4j/import    # CSV files go here for LOAD CSV
-      - ./plugins:/plugins                # APOC jar goes here
+      - ./import:/var/lib/neo4j/import
+      - ./plugins:/plugins
+
     healthcheck:
-      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "rp_strong_pass_2025",
-             "RETURN 1"]
+      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "rp_strong_pass_2025", "RETURN 1"]
       interval: 30s
       timeout: 10s
       retries: 5

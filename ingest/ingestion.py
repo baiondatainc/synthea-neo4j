@@ -168,7 +168,10 @@ def ingest_campaigns(data_dir: Path, batch_size: int):
 def ingest_birdeye(data_dir: Path, batch_size: int):
     logger.info("📥 [5/13] Ingesting BirdeyeReview nodes ...")
     df = pd.read_parquet(data_dir / "02_dims/birdeye.parquet")
+    # Birdeye has 96 duplicate (Location, Date Posted On) pairs — dedup before load
+    df = df.drop_duplicates(subset=["Location", "Date Posted On"], keep="last")
     records = safe_records(df)
+    logger.info(f"    Birdeye deduped to {len(records):,} unique reviews")
 
     # Pass 1: BirdeyeReview nodes
     q1 = """
@@ -265,7 +268,12 @@ def enrich_patients_from_nav(data_dir: Path, batch_size: int):
         data_dir / "00_navigation/patient_navigation_map.parquet",
         columns=nav_cols,
     )
+    # Nav map has 5,790 rows for 5,000 patients (790 multi-practice rows).
+    # Keep the last row per (Source_Database_Code, PatientID) — most recent enrichment.
+    # This eliminates 790 wasted MATCH attempts.
+    df = df.drop_duplicates(subset=["Source_Database_Code", "PatientID"], keep="last")
     records = safe_records(df)
+    logger.info(f"    Nav map deduped to {len(records):,} unique patient-practice rows")
 
     query = """
     UNWIND $rows AS row
@@ -317,11 +325,28 @@ def enrich_patients_from_nav(data_dir: Path, batch_size: int):
 # ════════════════════════════════════════════════════════════════════
 
 def ingest_visits(data_dir: Path, batch_size: int):
+    """
+    Visits table is at LINE-ITEM grain — avg 2.03 rows per VisitID.
+    Deduplication is critical:
+      - Pass 1 (node creation): dedup on VisitID → 20,028 rows not 40,590
+      - Pass 2-4 (relationships): dedup on (PatientID, VisitID) → no duplicate edges
+    This halves the work for every pass.
+    """
     logger.info("📥 [8/13] Ingesting Visit nodes ...")
     df = pd.read_parquet(data_dir / "01_facts/visits.parquet")
-    records = safe_records(df)
 
-    # Pass 1: Visit nodes
+    # Deduplicated for node creation (one row per unique visit)
+    df_visit = df.drop_duplicates(subset=["Source_Database_Code", "VisitID"])
+    # Deduplicated for relationships (one row per patient-visit pair)
+    df_rel = df.drop_duplicates(subset=["Source_Database_Code", "PatientID", "VisitID"])
+
+    visit_records = safe_records(df_visit)
+    rel_records   = safe_records(df_rel)
+
+    logger.info(f"    Rows: {len(df):,} total → {len(visit_records):,} unique visits "
+                f"→ {len(rel_records):,} patient-visit pairs")
+
+    # Pass 1: Visit nodes (deduped — 20K not 40K)
     q1 = """
     UNWIND $rows AS row
     MERGE (v:Visit {source_db: row.Source_Database_Code, visit_id: row.VisitID})
@@ -339,9 +364,9 @@ def ingest_visits(data_dir: Path, batch_size: int):
         v.source_db                = row.Source_Database_Code
     """
     with Neo4jConnection.session() as s:
-        batch_load(s, q1, records, batch_size)
+        batch_load(s, q1, visit_records, batch_size)
 
-    # Pass 2: Patient → Visit
+    # Pass 2: Patient → Visit (deduped)
     q2 = """
     UNWIND $rows AS row
     MATCH (p:Patient {source_db: row.Source_Database_Code, patient_id: row.PatientID})
@@ -349,9 +374,9 @@ def ingest_visits(data_dir: Path, batch_size: int):
     MERGE (p)-[:HAD_VISIT]->(v)
     """
     with Neo4jConnection.session() as s:
-        batch_load(s, q2, records, batch_size)
+        batch_load(s, q2, rel_records, batch_size)
 
-    # Pass 3: Visit → Location
+    # Pass 3: Visit → Location (deduped)
     q3 = """
     UNWIND $rows AS row
     MATCH (v:Visit    {source_db: row.Source_Database_Code, visit_id:    row.VisitID})
@@ -359,10 +384,10 @@ def ingest_visits(data_dir: Path, batch_size: int):
     MERGE (v)-[:PERFORMED_AT]->(l)
     """
     with Neo4jConnection.session() as s:
-        batch_load(s, q3, records, batch_size)
+        batch_load(s, q3, visit_records, batch_size)
 
-    # Pass 4: Visit → InsurancePlan (Python pre-filter nulls)
-    ins_records = [r for r in records if r.get("PrimaryInsurancePlanNum") is not None]
+    # Pass 4: Visit → InsurancePlan (deduped + Python pre-filter nulls)
+    ins_records = [r for r in visit_records if r.get("PrimaryInsurancePlanNum") is not None]
     if ins_records:
         q4 = """
         UNWIND $rows AS row
@@ -373,7 +398,7 @@ def ingest_visits(data_dir: Path, batch_size: int):
         with Neo4jConnection.session() as s:
             batch_load(s, q4, ins_records, batch_size)
 
-    logger.info(f"  ✅ {len(records)} visits")
+    logger.info(f"  ✅ {len(visit_records):,} visit nodes | {len(rel_records):,} patient-visit links")
 
 
 def ingest_charges(data_dir: Path, batch_size: int):
@@ -730,7 +755,11 @@ def ingest_dialler_outbound(data_dir: Path, batch_size: int):
 def ingest_phone_bridge(data_dir: Path, batch_size: int):
     logger.info("📥 [13/13] Ingesting Phone Bridge ...")
     df = pd.read_parquet(data_dir / "03_supplementary/phone_bridge.parquet")
+    # Phone bridge has 2,759 duplicate (source_db, patient_id, phone_norm) rows
+    # Keep last (highest rc_call_count typically) — dedup before any Neo4j writes
+    df = df.drop_duplicates(subset=["Source_Database_Code", "PatientID", "phone_norm"], keep="last")
     records = safe_records(df)
+    logger.info(f"    Phone bridge deduped to {len(records):,} unique rows")
 
     # Pass 1: PhoneBridge nodes
     q1 = """
@@ -863,4 +892,3 @@ if __name__ == "__main__":
     drop = "--drop" in sys.argv
     data = next((sys.argv[i + 1] for i, a in enumerate(sys.argv) if a == "--data"), None)
     run_ingestion(data_dir=data, drop_first=drop)
-    
