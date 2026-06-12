@@ -115,25 +115,44 @@ INDEXES = [
     "CREATE FULLTEXT INDEX procedure_ft IF NOT EXISTS FOR (p:ProcedureCode) ON EACH [p.code]",
 ]
 
+INDEX_NAMES = [stmt.split()[2] for stmt in INDEXES]
 
-def create_schema():
-    logger.info("Creating RP Knowledge Graph schema ...")
 
+def create_constraints():
+    logger.info("Creating RP Knowledge Graph constraints ...")
     for stmt in CONSTRAINTS:
         try:
             Neo4jConnection.run_query(stmt)
             logger.info(f"  ✓ Constraint: {stmt[20:70]}...")
         except Exception as e:
             logger.warning(f"  ⚠ {e}")
+    logger.info("✅ Constraints ready")
 
+
+def create_indexes():
+    logger.info("Creating RP Knowledge Graph indexes ...")
     for stmt in INDEXES:
         try:
             Neo4jConnection.run_query(stmt)
             logger.info(f"  ✓ Index: {stmt[13:70]}...")
         except Exception as e:
             logger.warning(f"  ⚠ {e}")
+    logger.info("✅ Indexes ready")
 
-    logger.info("✅ Schema ready")
+
+def drop_indexes():
+    logger.info("Dropping non-constraint indexes before ingestion ...")
+    for name in INDEX_NAMES:
+        try:
+            Neo4jConnection.run_query(f"DROP INDEX {name} IF EXISTS")
+            logger.info(f"  ✓ Dropped index: {name}")
+        except Exception as e:
+            logger.warning(f"  ⚠ Failed to drop index {name}: {e}")
+
+
+def create_schema():
+    create_constraints()
+    create_indexes()
 
 
 def drop_all_data():

@@ -37,9 +37,7 @@ def cmd_serve():
 
 
 def cmd_ingest(drop: bool = False):
-    from ingest.schema import create_schema
     from ingest.ingestion import run_ingestion
-    create_schema()
     run_ingestion(drop_first=drop)
 
 
