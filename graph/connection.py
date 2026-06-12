@@ -20,6 +20,9 @@ class Neo4jConnection:
     @classmethod
     def _create_driver(cls) -> Driver:
         settings = get_settings()
+
+        # bolt:// for local Docker, neo4j+s:// for Aura cloud
+        # Controlled entirely by NEO4J_URI in .env — no code change needed
         driver = GraphDatabase.driver(
             settings.neo4j_uri,
             auth=(settings.neo4j_username, settings.neo4j_password),
@@ -29,7 +32,7 @@ class Neo4jConnection:
             keep_alive=True,
         )
         driver.verify_connectivity()
-        logger.info("✅ Connected to Neo4j Aura")
+        logger.info(f"✅ Connected to Neo4j at {settings.neo4j_uri}")
         return driver
 
     @classmethod
@@ -53,8 +56,11 @@ class Neo4jConnection:
     @classmethod
     @contextmanager
     def session(cls) -> Generator:
+        settings = get_settings()
+        # NEO4J_DATABASE=neo4j works for both local and Aura
+        db = getattr(settings, "neo4j_database", "neo4j")
         driver = cls.get_driver()
-        session = driver.session(database="neo4j")
+        session = driver.session(database=db)
         try:
             yield session
         finally:
@@ -70,9 +76,12 @@ class Neo4jConnection:
                 result = session.run(query, parameters or {})
                 return [record.data() for record in result]
         except Exception as e:
-            # SSL EOF / SessionExpired — reconnect once and retry
+            # Handles local Docker restarts + Aura SSL drops
             if _retry and any(
-                k in str(e) for k in ("SessionExpired", "SSLEOFError", "EOF", "ServiceUnavailable")
+                k in str(e) for k in (
+                    "SessionExpired", "SSLEOFError", "EOF",
+                    "ServiceUnavailable", "ConnectionResetError",
+                )
             ):
                 logger.warning(f"Neo4j connection lost, reconnecting... ({e})")
                 cls._reset_driver()

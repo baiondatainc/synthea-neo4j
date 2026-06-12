@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     log_level: str = Field("INFO", env="LOG_LEVEL")
 
     # Data
-    synthea_data_dir: str = Field("./data/synthea", env="SYNTHEA_DATA_DIR")
+    synthea_data_dir: str = Field("/home/siva/work/codebase/RP/synthea-neo4j/generator/input", env="SYNTHEA_DATA_DIR")
     batch_size: int = Field(500, env="BATCH_SIZE")
 
     class Config:
