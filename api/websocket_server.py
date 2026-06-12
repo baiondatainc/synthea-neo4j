@@ -1,14 +1,15 @@
 """
-FastAPI WebSocket server for streaming QA.
+FastAPI server for streaming QA over the RP Knowledge Graph.
+Sutherland Global Services — HealthGraph AI for Radiology Partners.
 
 WebSocket protocol (JSON messages):
-  Client → Server: {"question": "Which patients have diabetes?"}
-  Server → Client: {"type": "cypher",  "data": "MATCH (p:Patient)..."}
+  Client → Server: {"question": "Which patients have the highest balance?"}
+  Server → Client: {"type": "cypher",  "data": "MATCH (p:Patient)...", "results": [...]}
   Server → Client: {"type": "token",   "data": "Based on"}
-  Server → Client: {"type": "token",   "data": " the results..."}
   Server → Client: {"type": "end",     "data": ""}
   Server → Client: {"type": "error",   "data": "error message"}
-  Server → Client: {"type": "stats",   "data": {"nodes": 1000, ...}}
+
+Also exposes OpenAI-compatible /v1/chat/completions for LibreChat.
 """
 import json
 import logging
@@ -20,7 +21,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from graph.connection import Neo4jConnection
-from ingest.schema import create_schema
 from qa.chain import stream_qa_response
 from api.openai_compat import router as openai_router
 from config import get_settings
@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("🚀 Starting Synthea-Neo4j QA Server...")
+    logger.info("🚀 Starting HealthGraph AI QA Server (Radiology Partners)...")
     Neo4jConnection.get_driver()   # warm up connection pool
     yield
     Neo4jConnection.close()
@@ -42,8 +42,8 @@ async def lifespan(app: FastAPI):
 # ── App ───────────────────────────────────────────────────────────────────────
 
 app = FastAPI(
-    title="Synthea Neo4j Knowledge Graph QA",
-    description="WebSocket-based streaming QA over a healthcare knowledge graph",
+    title="HealthGraph AI — RP Knowledge Graph QA",
+    description="Streaming QA over the Radiology Partners knowledge graph",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -72,15 +72,18 @@ async def health():
 
 @app.get("/stats")
 async def graph_stats():
-    """Return node and relationship counts."""
+    """Return node and relationship counts for the RP knowledge graph."""
     queries = {
         "patients":      "MATCH (n:Patient) RETURN count(n) AS count",
-        "encounters":    "MATCH (n:Encounter) RETURN count(n) AS count",
-        "conditions":    "MATCH (n:Condition) RETURN count(n) AS count",
-        "medications":   "MATCH (n:Medication) RETURN count(n) AS count",
-        "procedures":    "MATCH (n:Procedure) RETURN count(n) AS count",
-        "providers":     "MATCH (n:Provider) RETURN count(n) AS count",
-        "organizations": "MATCH (n:Organization) RETURN count(n) AS count",
+        "practices":     "MATCH (n:Practice) RETURN count(n) AS count",
+        "locations":     "MATCH (n:Location) RETURN count(n) AS count",
+        "visits":        "MATCH (n:Visit) RETURN count(n) AS count",
+        "charges":       "MATCH (n:Charge) RETURN count(n) AS count",
+        "transactions":  "MATCH (n:Transaction) RETURN count(n) AS count",
+        "statements":    "MATCH (n:Statement) RETURN count(n) AS count",
+        "insurance":     "MATCH (n:InsurancePlan) RETURN count(n) AS count",
+        "rc_calls":      "MATCH (n:RCCall) RETURN count(n) AS count",
+        "ivr_calls":     "MATCH (n:IVRInbound) RETURN count(n) AS count",
         "relationships": "MATCH ()-[r]->() RETURN count(r) AS count",
     }
     stats = {}
@@ -90,30 +93,22 @@ async def graph_stats():
     return stats
 
 
-@app.post("/ingest")
-async def trigger_ingestion(drop_first: bool = False):
-    """Trigger data ingestion (runs in background)."""
-    from ingest.ingestion import run_ingestion
-    asyncio.create_task(
-        asyncio.to_thread(run_ingestion, drop_first=drop_first)
-    )
-    return {"status": "ingestion started", "drop_first": drop_first}
-
-
 @app.get("/sample-questions")
 async def sample_questions():
     return {
         "questions": [
-            "Which patients have diabetes?",
-            "What are the most common conditions in the dataset?",
-            "Which medications are most frequently prescribed?",
-            "Show me patients who have both hypertension and diabetes",
-            "What is the average cost of emergency encounters?",
-            "Which providers have seen the most patients?",
-            "What conditions are most common in female patients over 60?",
-            "Show me the top 10 most expensive encounters",
-            "What procedures are performed most often for diabetic patients?",
-            "How many patients have been hospitalized (inpatient encounters)?",
+            "Which patients have the highest outstanding balance?",
+            "What is the total bad debt by state?",
+            "Show me catastrophe patients in Tennessee",
+            "Which practices have the most self-pay patients?",
+            "What are the most common procedures by modality?",
+            "How much was collected through IVR pay-by-phone?",
+            "Which insurance carriers cover the most visits?",
+            "What is the average charge amount by procedure modality?",
+            "Show me patients with bad debt over $5000",
+            "Which locations have the lowest Birdeye ratings?",
+            "How many multi-practice patients are there?",
+            "What is the contractual adjustment total by practice?",
         ]
     }
 

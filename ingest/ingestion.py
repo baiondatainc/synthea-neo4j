@@ -851,7 +851,7 @@ def run_ingestion(data_dir: str = None, drop_first: bool = False):
     ingest_ringcentral(data_path, batch_size)
     ingest_ivr_inbound(data_path, batch_size)
     ingest_dialler_outbound(data_path, batch_size)
-    ingest_phone_bridge(data_path, batch_size)
+    # ingest_phone_bridge(data_path, batch_size)
 
     logger.info("🎉 Ingestion complete!")
     _print_summary()

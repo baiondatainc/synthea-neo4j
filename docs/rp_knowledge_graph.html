@@ -1,0 +1,793 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sutherland Global Services — RP Knowledge Graph</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:#050d18;color:#e2e8f0;height:100vh;overflow:hidden}
+
+/* ── Top bar ── */
+.topbar{position:fixed;top:0;left:0;right:0;height:50px;background:#080f18;
+  border-bottom:1px solid rgba(0,217,166,.15);z-index:300;
+  display:flex;align-items:center;justify-content:space-between;padding:0 20px}
+.brand{display:flex;align-items:center;gap:10px}
+.brand-logo{font-size:12px;font-weight:800;color:#00d9a6;letter-spacing:.5px;text-transform:uppercase}
+.brand-sep{color:#1a3560;font-size:16px}
+.brand-title{font-size:12px;color:#64748b}
+.topbar-stats{display:flex;gap:20px}
+.tstat{font-size:10px;color:#475569}
+.tstat strong{color:#00d9a6}
+.topbar-hint{font-size:10px;color:#334155;font-style:italic}
+
+/* ── Canvas ── */
+#wrap{position:fixed;top:50px;left:0;right:380px;bottom:0;overflow:hidden;cursor:grab}
+#wrap.dragging{cursor:grabbing}
+svg#kg{width:100%;height:100%}
+
+/* ── Nodes ── */
+.node{cursor:pointer;transition:filter .2s}
+.node:hover{filter:brightness(1.3)}
+.node.selected .node-circle{filter:drop-shadow(0 0 12px currentColor)}
+.node-circle{transition:r .2s}
+.node-label{pointer-events:none;font-family:'Segoe UI',sans-serif;font-weight:600}
+.node-count{pointer-events:none;font-family:'Segoe UI',sans-serif}
+.node-amount{pointer-events:none;font-family:'Segoe UI',sans-serif;font-weight:700}
+
+/* ── Edges ── */
+.edge{fill:none;opacity:.45;transition:opacity .2s,stroke-width .2s}
+.edge:hover{opacity:.9}
+.edge.highlight{opacity:1;stroke-width:3 !important}
+.edge.dimmed{opacity:.08}
+.edge-label{pointer-events:none;font-family:'Segoe UI',sans-serif;
+  font-size:9px;fill:#475569}
+
+/* ── Right panel ── */
+#panel{position:fixed;top:50px;right:0;width:380px;bottom:0;
+  background:#080f18;border-left:1px solid rgba(255,255,255,.06);
+  display:flex;flex-direction:column;overflow:hidden}
+.panel-top{padding:18px 20px 14px;border-bottom:1px solid rgba(255,255,255,.06);flex-shrink:0}
+.panel-node-icon{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;
+  justify-content:center;font-size:16px;flex-shrink:0;margin-bottom:10px}
+.panel-name{font-size:16px;font-weight:700;color:#e2e8f0}
+.panel-desc{font-size:11px;color:#475569;margin-top:3px;line-height:1.5}
+.panel-kpis{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:14px 20px;
+  border-bottom:1px solid rgba(255,255,255,.06);flex-shrink:0}
+.kpi{background:#0d1b2a;border-radius:8px;padding:10px 12px}
+.kpi-label{font-size:9px;color:#475569;text-transform:uppercase;letter-spacing:.5px}
+.kpi-value{font-size:15px;font-weight:700;color:#00d9a6;margin-top:3px}
+.kpi-value.blue{color:#60a5fa}
+.kpi-value.amber{color:#fbbf24}
+.kpi-value.red{color:#f87171}
+.kpi-value.purple{color:#c084fc}
+.rels-section{flex:1;overflow-y:auto;padding:14px 20px}
+.rels-section::-webkit-scrollbar{width:3px}
+.rels-section::-webkit-scrollbar-thumb{background:#1a3560}
+.section-title{font-size:10px;font-weight:700;color:#475569;
+  text-transform:uppercase;letter-spacing:1px;margin-bottom:10px}
+.rel-item{display:flex;align-items:flex-start;gap:10px;padding:10px;
+  background:#0d1b2a;border-radius:8px;margin-bottom:8px;cursor:pointer;
+  border:1px solid rgba(255,255,255,.04);transition:border-color .15s}
+.rel-item:hover{border-color:rgba(0,217,166,.3)}
+.rel-arrow-badge{flex-shrink:0;padding:2px 6px;border-radius:4px;
+  font-size:9px;font-weight:700;margin-top:1px}
+.rel-info{flex:1;min-width:0}
+.rel-target{font-size:12px;font-weight:600;color:#e2e8f0}
+.rel-label{font-size:10px;color:#475569;margin-top:1px}
+.rel-amount{font-size:11px;font-weight:600;margin-top:3px}
+.props-section{padding:0 20px 14px;border-top:1px solid rgba(255,255,255,.06)}
+.prop-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:10px}
+.prop-item{background:#0a1628;border-radius:6px;padding:7px 10px}
+.prop-key{font-size:9px;color:#334155;text-transform:uppercase;letter-spacing:.5px}
+.prop-val{font-size:11px;color:#94a3b8;margin-top:2px}
+
+/* ── Legend ── */
+.legend{position:fixed;bottom:16px;left:16px;background:#080f18;
+  border:1px solid rgba(255,255,255,.07);border-radius:10px;
+  padding:12px 16px;z-index:200}
+.legend-title{font-size:9px;color:#334155;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px}
+.legend-row{display:flex;align-items:center;gap:8px;margin-bottom:5px;font-size:10px;color:#475569}
+.leg-dot{width:12px;height:12px;border-radius:50%;flex-shrink:0}
+.leg-line{width:20px;height:2px;border-radius:1px;flex-shrink:0}
+
+/* ── Controls ── */
+.controls{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);
+  display:flex;gap:6px;z-index:200}
+.ctrl{padding:6px 14px;background:#0d1b2a;border:1px solid rgba(255,255,255,.1);
+  border-radius:20px;font-size:11px;color:#94a3b8;cursor:pointer;transition:all .15s}
+.ctrl:hover{background:#1a3560;color:#e2e8f0;border-color:#00d9a6}
+.ctrl.active{background:rgba(0,217,166,.15);color:#00d9a6;border-color:#00d9a6}
+
+/* ── Default panel ── */
+.default-panel{padding:24px 20px;display:flex;flex-direction:column;gap:16px}
+.dp-title{font-size:14px;font-weight:700;color:#e2e8f0}
+.dp-desc{font-size:11px;color:#475569;line-height:1.6}
+.dp-metric{display:flex;justify-content:space-between;align-items:center;
+  padding:10px 14px;background:#0d1b2a;border-radius:8px;border-left:3px solid #00d9a6}
+.dp-metric-label{font-size:11px;color:#64748b}
+.dp-metric-val{font-size:14px;font-weight:700;color:#00d9a6}
+.dp-metric.blue{border-color:#60a5fa}
+.dp-metric.blue .dp-metric-val{color:#60a5fa}
+.dp-metric.amber{border-color:#fbbf24}
+.dp-metric.amber .dp-metric-val{color:#fbbf24}
+.dp-metric.red{border-color:#f87171}
+.dp-metric.red .dp-metric-val{color:#f87171}
+.dp-metric.purple{border-color:#c084fc}
+.dp-metric.purple .dp-metric-val{color:#c084fc}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">
+    <div class="brand-logo">Sutherland Global Services</div>
+    <div class="brand-sep">|</div>
+    <div class="brand-title">Radiology Partners — Knowledge Graph</div>
+  </div>
+  <div class="topbar-stats">
+    <div class="tstat"><strong>5,000</strong> Patients</div>
+    <div class="tstat"><strong>20,028</strong> Visits</div>
+    <div class="tstat"><strong>47,512</strong> Charges</div>
+    <div class="tstat"><strong>$32.1M</strong> Charged</div>
+    <div class="tstat"><strong>$15.4M</strong> Paid</div>
+    <div class="tstat"><strong>$10.3M</strong> Outstanding</div>
+  </div>
+  <div class="topbar-hint">Click node to explore · Drag to pan · Scroll to zoom</div>
+</div>
+
+<div id="wrap">
+<svg id="kg" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arr" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+      <polygon points="0 0, 7 3.5, 0 7" fill="#1a3560"/>
+    </marker>
+    <marker id="arr-teal" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+      <polygon points="0 0, 7 3.5, 0 7" fill="#00d9a6"/>
+    </marker>
+    <marker id="arr-blue" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+      <polygon points="0 0, 7 3.5, 0 7" fill="#60a5fa"/>
+    </marker>
+    <marker id="arr-amber" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+      <polygon points="0 0, 7 3.5, 0 7" fill="#fbbf24"/>
+    </marker>
+    <filter id="glow-teal">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <radialGradient id="bg-grad" cx="50%" cy="50%">
+      <stop offset="0%" stop-color="#0a1628"/>
+      <stop offset="100%" stop-color="#050d18"/>
+    </radialGradient>
+  </defs>
+  <rect width="100%" height="100%" fill="url(#bg-grad)"/>
+  <g id="scene">
+    <g id="edges-layer"></g>
+    <g id="nodes-layer"></g>
+  </g>
+</svg>
+</div>
+
+<!-- Right panel -->
+<div id="panel">
+  <div id="panel-content">
+    <div class="default-panel">
+      <div class="dp-title">📊 Dataset Overview</div>
+      <div class="dp-desc">Click any node to explore its properties, relationships, and financial metrics. The graph shows all entities and their connections across the Radiology Partners dataset.</div>
+      <div class="dp-metric"><span class="dp-metric-label">Total Charged</span><span class="dp-metric-val">$32,109,768</span></div>
+      <div class="dp-metric blue"><span class="dp-metric-label">Total Paid</span><span class="dp-metric-val">$15,389,731</span></div>
+      <div class="dp-metric amber"><span class="dp-metric-label">Outstanding Balance</span><span class="dp-metric-val">$10,311,399</span></div>
+      <div class="dp-metric red"><span class="dp-metric-label">Bad Debt</span><span class="dp-metric-val">$4,763,276</span></div>
+      <div class="dp-metric purple"><span class="dp-metric-label">Contractual Adj</span><span class="dp-metric-val">$18,172,511</span></div>
+      <div class="dp-metric"><span class="dp-metric-label">Collection Agency Adj</span><span class="dp-metric-val">$206,686</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="controls">
+  <button class="ctrl" id="btn-fit">⊡ Fit</button>
+  <button class="ctrl" id="btn-zin">+ Zoom</button>
+  <button class="ctrl" id="btn-zout">− Zoom</button>
+  <button class="ctrl active" id="btn-labels" onclick="toggleLabels(this)">Labels On</button>
+</div>
+
+<div class="legend">
+  <div class="legend-title">Node types</div>
+  <div class="legend-row"><div class="leg-dot" style="background:#00d9a6"></div>Patient / MPI</div>
+  <div class="legend-row"><div class="leg-dot" style="background:#60a5fa"></div>Visit / Charge / Transaction</div>
+  <div class="legend-row"><div class="leg-dot" style="background:#fbbf24"></div>Location / Practice</div>
+  <div class="legend-row"><div class="leg-dot" style="background:#c084fc"></div>Insurance / Statement</div>
+  <div class="legend-row"><div class="leg-dot" style="background:#f87171"></div>Call / IVR / RC</div>
+  <div class="legend-row" style="margin-top:6px"><div class="leg-line" style="background:#00d9a6"></div>Financial flow</div>
+  <div class="legend-row"><div class="leg-line" style="background:#60a5fa;opacity:.5"></div>Reference join</div>
+</div>
+
+<script>
+// ════════════════════════════════════════════════════════════════════
+// KNOWLEDGE GRAPH DATA
+// ════════════════════════════════════════════════════════════════════
+const NODES = [
+  // ── Core patient entities ──
+  {id:'Patient',        label:'Patient',           icon:'👤', color:'#00d9a6', r:52,  x:700,  y:400,
+   group:'patient',
+   desc:'Core patient demographic entity. 5,000 unique patient-practice records across 44 practices. 15.8% appear at 2+ practices (multi-practice).',
+   kpis:[
+     {label:'Total Patients',   val:'5,000',    cls:''},
+     {label:'Self-Pay',         val:'3,162',    cls:'amber'},
+     {label:'BAI (Insured)',    val:'1,442',    cls:'blue'},
+     {label:'Fully Covered',   val:'1,186',    cls:''},
+     {label:'Catastrophe',     val:'763',      cls:'red'},
+     {label:'Multi-Practice',  val:'1,580 rows',cls:'purple'},
+   ],
+   props:[
+     {k:'Avg Age',        v:'~52 yrs'},
+     {k:'Gender Split',   v:'56% F / 44% M'},
+     {k:'SSN Null %',     v:'55.6%'},
+     {k:'Phone Null %',   v:'8.8%'},
+     {k:'Top State',      v:'TX'},
+     {k:'Practices',      v:'44'},
+   ]},
+
+  {id:'MasterPatientIndex', label:'Master Patient\nIndex', icon:'🧩', color:'#00d9a6', r:30, x:420, y:220,
+   group:'patient',
+   desc:'One row per unique human (collapsed across all practices). De-duplicated MPI for cross-practice analytics.',
+   kpis:[
+     {label:'Unique Humans',    val:'5,000',    cls:''},
+     {label:'Multi-Practice',  val:'0 (scaled)',cls:'purple'},
+     {label:'Total Interactions',val:'avg 30+', cls:'blue'},
+     {label:'Has Called',      val:'~35%',     cls:'amber'},
+   ],
+   props:[{k:'Key Column',v:'PatientID'},{k:'Grain',v:'1 row/human'},{k:'Folder',v:'03_supplementary'},{k:'Rows',v:'5,000'}]},
+
+  {id:'NavigationMap', label:'Navigation\nMap', icon:'🗺️', color:'#34d399', r:34, x:440, y:580,
+   group:'patient',
+   desc:'144-column master analytical table. Enriched with all cohort flags, financial rollups, call tallies, location and Birdeye data.',
+   kpis:[
+     {label:'Rows',             val:'5,790',    cls:''},
+     {label:'Columns',         val:'144',      cls:'blue'},
+     {label:'Active Window',   val:'~90%',     cls:''},
+     {label:'Catastrophe Flag',val:'763',      cls:'red'},
+   ],
+   props:[{k:'Folder',v:'00_navigation'},{k:'is_catastrophe',v:'bool'},{k:'call_tier',v:'0-5+'},{k:'payor_cohort',v:'3 buckets'}]},
+
+  // ── Clinical / Financial facts ──
+  {id:'Visit',          label:'Visit',             icon:'🏥', color:'#60a5fa', r:44,  x:1000, y:250,
+   group:'fact',
+   desc:'Radiology encounter record. Line-item grain: avg 2.41 rows per VisitID (chart history lines). 20,028 unique visits.',
+   kpis:[
+     {label:'Total Rows',       val:'40,590',   cls:'blue'},
+     {label:'Unique Visits',   val:'20,028',   cls:''},
+     {label:'Avg Lines/Visit', val:'2.41',     cls:'amber'},
+     {label:'Avg Visits/Pat',  val:'8.1',      cls:''},
+   ],
+   props:[{k:'Key',v:'VisitID'},{k:'Date cols',v:'AdmitDate, Discharge'},{k:'Ins Plans',v:'Primary/Sec/Ter'},{k:'Null Auth %',v:'17.5%'}]},
+
+  {id:'Charge',         label:'Charge',            icon:'💊', color:'#60a5fa', r:46,  x:1000, y:550,
+   group:'fact',
+   desc:'Individual procedure charge. Each visit generates 1-4 charges. Contains ICD-10 diagnoses, procedure codes, amounts.',
+   kpis:[
+     {label:'Total Charges',   val:'47,512',   cls:'blue'},
+     {label:'Total Charged',   val:'$32.1M',   cls:''},
+     {label:'Avg Charge',      val:'$675.82',  cls:'amber'},
+     {label:'Max Charge',      val:'$13,056',  cls:'red'},
+   ],
+   props:[{k:'Procedure Codes',v:'35 radiology CPTs'},{k:'ICD-10 cols',v:'10 diagnosis fields'},{k:'Avg/Visit',v:'2.4 charges'},{k:'Voided',v:'1.9%'}]},
+
+  {id:'Transaction',    label:'Transaction',       icon:'💳', color:'#60a5fa', r:42,  x:1250, y:420,
+   group:'fact',
+   desc:'Payment and adjustment records. Each charge has ~1.6 transactions. Includes 4-bucket adjustment taxonomy.',
+   kpis:[
+     {label:'Total Txns',      val:'75,855',   cls:'blue'},
+     {label:'Total Paid',      val:'$15.4M',   cls:''},
+     {label:'Total Adj',       val:'$23.2M',   cls:'amber'},
+     {label:'Bad Debt Adj',    val:'$4.76M',   cls:'red'},
+   ],
+   props:[{k:'Contractual',v:'$18.2M'},{k:'Bad Debt',v:'$4.76M'},{k:'Collection',v:'$207K'},{k:'Bucket col',v:'AdjustmentBucket'}]},
+
+  {id:'Statement',      label:'Statement',         icon:'📄', color:'#c084fc', r:34,  x:1250, y:650,
+   group:'fact',
+   desc:'Patient billing statements. Avg 2.8 statements per patient. Tracks balance, level, email/text delivery.',
+   kpis:[
+     {label:'Total Statements',val:'14,166',   cls:'purple'},
+     {label:'Avg Pat Balance', val:'$999',     cls:'amber'},
+     {label:'Avg Tot Balance', val:'$3,520',   cls:'red'},
+     {label:'Avg/Patient',     val:'2.8',      cls:''},
+   ],
+   props:[{k:'Levels',v:'1→Final→Collections'},{k:'Email flag',v:'~17% sent'},{k:'Text flag',v:'~58% sent'},{k:'IsReleased',v:'~90%'}]},
+
+  // ── Reference dimensions ──
+  {id:'Location',       label:'Location',          icon:'📍', color:'#fbbf24', r:36,  x:700,  y:720,
+   group:'dim',
+   desc:'Physical radiology practice locations. 300 locations across 44 practices. ~2% have Birdeye review data.',
+   kpis:[
+     {label:'Total Locations', val:'300',      cls:'amber'},
+     {label:'Practices',       val:'44',       cls:''},
+     {label:'With Birdeye',   val:'~6 locs',  cls:'purple'},
+     {label:'States',          val:'6',        cls:'blue'},
+   ],
+   props:[{k:'Types',v:'Prof/Global/Facility'},{k:'NPI null',v:'44%'},{k:'Phone null',v:'54%'},{k:'Top state',v:'TX/TN/OH'}]},
+
+  {id:'Insurance',      label:'Insurance\nPlan',   icon:'🛡️', color:'#c084fc', r:34,  x:1000, y:100,
+   group:'dim',
+   desc:'Insurance plan reference dictionary. 2,000 plans across 44 practices. Links to visits via PlanNumber.',
+   kpis:[
+     {label:'Total Plans',     val:'2,000',    cls:'purple'},
+     {label:'Carriers',        val:'17',       cls:''},
+     {label:'Plan Types',      val:'10',       cls:'blue'},
+     {label:'Top Carrier',     val:'BCBS 18%', cls:''},
+   ],
+   props:[{k:'Top carriers',v:'BCBS, United, Aetna'},{k:'Types',v:'HMO/PPO/EPO/MCDASSIGN'},{k:'Key',v:'PlanNumber'},{k:'FK in visits',v:'PrimaryInsurancePlanNum'}]},
+
+  {id:'Practice',       label:'Practice\n(44 codes)',icon:'🏢', color:'#fbbf24', r:36, x:430, y:400,
+   group:'dim',
+   desc:'44 Radiology Partners practice codes (Source_Database_Code). Key used across every table to identify the originating practice system.',
+   kpis:[
+     {label:'Total Practices', val:'44',       cls:'amber'},
+     {label:'States',          val:'6',        cls:''},
+     {label:'Largest',         val:'PXP (137)',cls:'blue'},
+     {label:'SAPA patients',   val:'~113',     cls:''},
+   ],
+   props:[{k:'Key col',v:'Source_Database_Code'},{k:'States',v:'TX/TN/OH/FL/GA/NV'},{k:'Appears in',v:'Every table'},{k:'SAPA',v:'Texas flagship'}]},
+
+  {id:'Birdeye',        label:'Birdeye\nReviews',  icon:'⭐', color:'#fbbf24', r:28,  x:430,  y:730,
+   group:'dim',
+   desc:'Public patient reviews from Google/Yelp/Healthgrades. 500 reviews. ~0.5% contain PHI (phone/email in review text).',
+   kpis:[
+     {label:'Total Reviews',   val:'500',      cls:'amber'},
+     {label:'PHI Flagged',     val:'~2-3',     cls:'red'},
+     {label:'5-star share',   val:'~65%',     cls:''},
+     {label:'Avg Rating',     val:'~4.2',     cls:'blue'},
+   ],
+   props:[{k:'Sources',v:'Google/Yelp/Healthgrades'},{k:'PHI types',v:'Phone, Email'},{k:'HIPAA risk',v:'Public exposure'},{k:'FK',v:'LocationName'}]},
+
+  // ── Communication tables ──
+  {id:'RingCentral',    label:'RingCentral\nCalls', icon:'📞', color:'#f87171', r:36,  x:1250, y:200,
+   group:'calls',
+   desc:'Agent call centre records. 5,000 calls. start_time is intentionally broken (DQ-002) — use Start_Date instead.',
+   kpis:[
+     {label:'Total Calls',     val:'5,000',    cls:'red'},
+     {label:'Avg Agent Time',  val:'~530s',    cls:''},
+     {label:'Abandon Rate',    val:'~10%',     cls:'amber'},
+     {label:'SLA Met',         val:'~60%',     cls:'blue'},
+   ],
+   props:[{k:'DQ-002',v:'start_time broken'},{k:'Use instead',v:'Start_Date'},{k:'Agent IDs',v:'12 agents'},{k:'Campaigns',v:'16 names'}]},
+
+  {id:'RVInbound',      label:'IVR Inbound\n(Pay-By-Phone)',icon:'📲',color:'#f87171',r:30, x:1250, y:820,
+   group:'calls',
+   desc:'Interactive Voice Response inbound calls. Patients calling to pay balance or query account. AccountID = PatientID (DQ-003).',
+   kpis:[
+     {label:'Total Calls',     val:'400',      cls:'red'},
+     {label:'Payments Made',   val:'~47%',     cls:''},
+     {label:'Total Collected', val:'$138,524', cls:''},
+     {label:'Avg Balance',     val:'$1,466',   cls:'amber'},
+   ],
+   props:[{k:'Key link',v:'AccountID = PatientID'},{k:'DQ-003',v:'Confirmed'},{k:'IVR types',v:'4 call types'},{k:'Auth rate',v:'~70%'}]},
+
+  {id:'RVOutbound',     label:'Dialler\nOutbound',  icon:'📡', color:'#f87171', r:28,  x:1450, y:660,
+   group:'calls',
+   desc:'Outbound dialler calls. ACCOUNTID = PatientID. 20.8% null CALLDATETIME (pipeline artefact).',
+   kpis:[
+     {label:'Total Calls',     val:'150',      cls:'red'},
+     {label:'CALLDATETIME null',val:'20.8%',  cls:'amber'},
+     {label:'Avg Balance',     val:'~$2,500',  cls:''},
+     {label:'Key link',        val:'ACCOUNTID',cls:'blue'},
+   ],
+   props:[{k:'Link',v:'ACCOUNTID = PatientID'},{k:'Null datetime',v:'20.8%'},{k:'Results',v:'11 disposition types'},{k:'Location',v:'SERVICELOC code'}]},
+
+  {id:'PhoneBridge',    label:'Phone\nBridge',      icon:'🔗', color:'#c084fc', r:30,  x:980,  y:820,
+   group:'supplementary',
+   desc:'Links patient phone numbers to RingCentral calls. Enables attribution: phone_norm → ANI_DIALNUM_norm.',
+   kpis:[
+     {label:'Bridge Rows',     val:'9,331',    cls:'purple'},
+     {label:'With RC Attr.',   val:'~350',     cls:''},
+     {label:'Phone Types',     val:'4',        cls:'blue'},
+     {label:'Match Rate',      val:'~6.5%',    cls:'amber'},
+   ],
+   props:[{k:'Phone types',v:'patient/cell/resp_party'},{k:'FK left',v:'PatientID'},{k:'FK right',v:'ANI_DIALNUM_norm'},{k:'Campaign attr',v:'Yes'}]},
+
+  {id:'CampaignMap',    label:'Campaign\nMap',       icon:'📣', color:'#f97316', r:26,  x:1450, y:300,
+   group:'supplementary',
+   desc:'45-row reference: Campaign_Name → Source_Database_Code. 8.9% have no matched practice (non-Imagine DBs).',
+   kpis:[
+     {label:'Campaigns',       val:'45',       cls:'amber'},
+     {label:'Matched Practices',val:'91.1%',  cls:''},
+     {label:'Non-Imagine',     val:'8.9%',    cls:'red'},
+     {label:'Used in RC',      val:'Yes',     cls:'blue'},
+   ],
+   props:[{k:'Key',v:'Campaign Name'},{k:'FK',v:'Source_Database_Code'},{k:'Usage',v:'RingCentral attribution'},{k:'Null src %',v:'8.9%'}]},
+
+  {id:'PatCallBridge',  label:'Patient\nCall Bridge', icon:'🌉', color:'#c084fc', r:26, x:700, y:900,
+   group:'supplementary',
+   desc:'Confidence-scored linkage table: AccountID → PatientID across call systems.',
+   kpis:[
+     {label:'Bridge Rows',     val:'746',      cls:'purple'},
+     {label:'Confirmed',       val:'~80%',     cls:''},
+     {label:'Inferred',        val:'~20%',     cls:'amber'},
+     {label:'Sources',         val:'3',        cls:'blue'},
+   ],
+   props:[{k:'Confidence',v:'confirmed/inferred'},{k:'Sources',v:'rv_in/rv_out/inferred'},{k:'DQ note',v:'36% outside window'},{k:'AccountID',v:'= PatientID'}]},
+];
+
+// ════════════════════════════════════════════════════════════════════
+// EDGES
+// ════════════════════════════════════════════════════════════════════
+const EDGES = [
+  // Patient ↔ core
+  {s:'Patient', t:'Visit',         label:'HAD_VISIT',          amount:'8.1 visits/patient',  color:'#60a5fa', thick:3},
+  {s:'Patient', t:'Charge',        label:'HAS_CHARGE',         amount:'9.5 charges/patient', color:'#60a5fa', thick:2.5},
+  {s:'Patient', t:'Transaction',   label:'HAS_TRANSACTION',    amount:'$3,085 avg paid',     color:'#00d9a6', thick:3},
+  {s:'Patient', t:'Statement',     label:'RECEIVED_STATEMENT', amount:'2.8 stmts/patient',   color:'#c084fc', thick:2},
+  {s:'Patient', t:'NavigationMap', label:'ANALYSED_IN',        amount:'144 enriched cols',   color:'#34d399', thick:2},
+  {s:'Patient', t:'MasterPatientIndex', label:'DEDUPLICATED_TO',amount:'1 row/human',       color:'#00d9a6', thick:2},
+  {s:'Patient', t:'Practice',      label:'REGISTERED_AT',      amount:'44 practices',        color:'#fbbf24', thick:2.5},
+
+  // Visit chain
+  {s:'Visit',   t:'Charge',        label:'GENERATED',          amount:'2.4 charges/visit',   color:'#60a5fa', thick:3},
+  {s:'Visit',   t:'Location',      label:'PERFORMED_AT',       amount:'300 locations',       color:'#fbbf24', thick:2},
+  {s:'Visit',   t:'Insurance',     label:'COVERED_BY',         label2:'PrimaryInsurancePlanNum',amount:'2,000 plans',color:'#c084fc',thick:2},
+
+  // Charge → Transaction (financial flow)
+  {s:'Charge',  t:'Transaction',   label:'SETTLED_BY',         amount:'$675 avg → paid+adj', color:'#00d9a6', thick:3.5},
+
+  // Financial breakdown on Transaction
+  {s:'Transaction', t:'Statement', label:'GENERATES',          amount:'$999 avg patient bal', color:'#c084fc', thick:2},
+
+  // Location → Practice
+  {s:'Location', t:'Practice',     label:'BELONGS_TO',         amount:'~7 locs/practice',    color:'#fbbf24', thick:2},
+  {s:'Location', t:'Birdeye',      label:'HAS_REVIEWS',        amount:'~2% locations rated', color:'#fbbf24', thick:1.5},
+
+  // Call flows
+  {s:'Patient', t:'RVInbound',     label:'CALLED_IVR',         amount:'$138K IVR payments',  color:'#f87171', thick:2},
+  {s:'Patient', t:'RVOutbound',    label:'DIALLED',            amount:'150 outbound calls',  color:'#f87171', thick:1.5},
+  {s:'PhoneBridge', t:'RingCentral',label:'LINKS_TO',          amount:'phone_norm→ANI',       color:'#c084fc', thick:2},
+  {s:'Patient', t:'PhoneBridge',   label:'IDENTIFIED_BY',      amount:'9,331 phone rows',    color:'#c084fc', thick:2},
+  {s:'CampaignMap', t:'RingCentral',label:'TARGETS_VIA',       amount:'16 campaigns',        color:'#f97316', thick:1.5},
+  {s:'RVInbound', t:'PatCallBridge',label:'RESOLVED_BY',       amount:'AccountID=PatientID', color:'#f87171', thick:1.5},
+  {s:'RVOutbound', t:'PatCallBridge',label:'RESOLVED_BY',      amount:'ACCOUNTID=PatientID', color:'#f87171', thick:1.5},
+
+  // Supplementary
+  {s:'Insurance', t:'Visit',       label:'AUTHORISES',         amount:'PlanNum FK',          color:'#c084fc', thick:1.5},
+  {s:'Practice',  t:'Location',    label:'OPERATES',           amount:'Source_Database_Code',color:'#fbbf24', thick:2},
+];
+
+// ════════════════════════════════════════════════════════════════════
+// RENDER ENGINE
+// ════════════════════════════════════════════════════════════════════
+const SVG_NS = 'http://www.w3.org/2000/svg';
+function el(tag, attrs, parent){
+  const e = document.createElementNS(SVG_NS, tag);
+  for (const [k,v] of Object.entries(attrs||{})) e.setAttribute(k,v);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+function txt(content, attrs, parent){
+  const t = el('text', attrs, parent);
+  t.textContent = content;
+  return t;
+}
+
+const scene       = document.getElementById('scene');
+const edgesLayer  = document.getElementById('edges-layer');
+const nodesLayer  = document.getElementById('nodes-layer');
+const wrap        = document.getElementById('wrap');
+const panel       = document.getElementById('panel');
+
+// Node map
+const nodeMap = {};
+NODES.forEach(n => nodeMap[n.id] = n);
+
+// ── Draw edges ──────────────────────────────────────────────────────
+const edgeEls = [];
+EDGES.forEach((edge, i) => {
+  const s = nodeMap[edge.s], t = nodeMap[edge.t];
+  if (!s || !t) return;
+
+  const dx = t.x - s.x, dy = t.y - s.y;
+  const dist = Math.sqrt(dx*dx + dy*dy);
+  const ux = dx/dist, uy = dy/dist;
+  const x1 = s.x + ux * s.r, y1 = s.y + uy * s.r;
+  const x2 = t.x - ux * t.r, y2 = t.y - uy * t.r;
+
+  // Curve control points
+  const mx = (x1+x2)/2, my = (y1+y2)/2;
+  const perp = {x: -uy, y: ux};
+  const curve = 40 * (i%2 === 0 ? 1 : -1);
+  const cx = mx + perp.x * curve, cy = my + perp.y * curve;
+  const d = `M${x1},${y1} Q${cx},${cy} ${x2},${y2}`;
+
+  const arrColor = edge.color === '#00d9a6' ? 'teal' :
+                   edge.color === '#60a5fa' ? 'blue' :
+                   edge.color === '#fbbf24' ? 'amber' : '';
+  const markerId = arrColor ? `arr-${arrColor}` : 'arr';
+
+  const path = el('path', {
+    d, class:'edge',
+    stroke: edge.color || '#1a3560',
+    'stroke-width': edge.thick || 1.5,
+    'marker-end': `url(#${markerId})`,
+    opacity: .45,
+  }, edgesLayer);
+
+  // Edge label (amount) — at midpoint
+  const lx = mx + perp.x * curve * 0.5;
+  const ly = my + perp.y * curve * 0.5;
+
+  const eLbl = el('text', {
+    x: lx, y: ly - 4,
+    class: 'edge-label',
+    'text-anchor': 'middle',
+    'font-size': '9',
+  }, edgesLayer);
+  eLbl.textContent = edge.amount || '';
+
+  edgeEls.push({path, eLbl, edge});
+});
+
+// ── Draw nodes ──────────────────────────────────────────────────────
+let selectedNode = null;
+const nodeEls = {};
+
+NODES.forEach(n => {
+  const g = el('g', {class:'node', transform:`translate(${n.x},${n.y})`}, nodesLayer);
+  g.dataset.id = n.id;
+
+  // Glow ring (selected state)
+  const ring = el('circle', {r: n.r + 8, fill:'none',
+    stroke: n.color, 'stroke-width': 2, opacity: 0,
+    class:'glow-ring'}, g);
+
+  // Main circle
+  const bg = el('circle', {r: n.r,
+    fill: `rgba(${hexToRgb(n.color)},0.12)`,
+    stroke: n.color, 'stroke-width': 2,
+    class:'node-circle'}, g);
+
+  // Inner circle
+  el('circle', {r: n.r * 0.6,
+    fill: `rgba(${hexToRgb(n.color)},0.08)`}, g);
+
+  // Icon
+  const iconEl = el('text', {
+    x:0, y: -8, 'text-anchor':'middle',
+    'font-size': Math.max(14, n.r * 0.45),
+    class:'node-label'}, g);
+  iconEl.textContent = n.icon;
+
+  // Label lines (handle \n)
+  const lines = n.label.split('\n');
+  const lineH = 13;
+  const startY = lines.length === 1 ? 10 : 6;
+  lines.forEach((line, li) => {
+    el('text', {
+      x:0, y: startY + li * lineH,
+      'text-anchor':'middle', 'font-size': 10,
+      fill: n.color, 'font-weight': '600',
+      'font-family': "'Segoe UI', sans-serif",
+    }, g).textContent = line;
+  });
+
+  // Count badge (shown on bottom)
+  const countY = n.r + 14;
+
+  nodeEls[n.id] = {g, ring, bg};
+
+  // Click
+  g.addEventListener('click', e => {
+    e.stopPropagation();
+    selectNode(n.id);
+  });
+});
+
+function hexToRgb(hex) {
+  const r = parseInt(hex.slice(1,3),16);
+  const g = parseInt(hex.slice(3,5),16);
+  const b = parseInt(hex.slice(5,7),16);
+  return `${r},${g},${b}`;
+}
+
+// ── Node selection ──────────────────────────────────────────────────
+function selectNode(id) {
+  selectedNode = id;
+  const node = nodeMap[id];
+
+  // Reset all
+  Object.values(nodeEls).forEach(({g, ring, bg}) => {
+    g.classList.remove('selected');
+    ring.setAttribute('opacity', 0);
+  });
+  edgeEls.forEach(({path, eLbl}) => {
+    path.classList.remove('highlight','dimmed');
+    path.setAttribute('opacity', .45);
+    eLbl.setAttribute('opacity', 1);
+  });
+
+  // Highlight selected node
+  const sel = nodeEls[id];
+  if (sel) {
+    sel.g.classList.add('selected');
+    sel.ring.setAttribute('opacity', .6);
+  }
+
+  // Highlight connected edges, dim others
+  const connectedNodes = new Set([id]);
+  edgeEls.forEach(({path, eLbl, edge}) => {
+    if (edge.s === id || edge.t === id) {
+      path.classList.add('highlight');
+      path.setAttribute('opacity', 1);
+      connectedNodes.add(edge.s);
+      connectedNodes.add(edge.t);
+    } else {
+      path.classList.add('dimmed');
+      path.setAttribute('opacity', .06);
+      eLbl.setAttribute('opacity', .2);
+    }
+  });
+
+  // Dim unconnected nodes
+  Object.entries(nodeEls).forEach(([nid, {g}]) => {
+    if (!connectedNodes.has(nid)) {
+      g.setAttribute('opacity', 0.25);
+    } else {
+      g.setAttribute('opacity', 1);
+    }
+  });
+
+  // Build panel
+  buildPanel(node, id);
+}
+
+function buildPanel(node, id) {
+  // Connected edges
+  const outEdges = edgeEls.filter(({edge}) => edge.s === id);
+  const inEdges  = edgeEls.filter(({edge}) => edge.t === id);
+
+  let html = `
+  <div class="panel-top">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+      <div class="panel-node-icon" style="background:rgba(${hexToRgb(node.color)},0.15);color:${node.color}">${node.icon}</div>
+      <div>
+        <div class="panel-name" style="color:${node.color}">${node.id}</div>
+        <div class="panel-desc">${node.desc}</div>
+      </div>
+    </div>
+  </div>
+  <div class="panel-kpis">
+    ${node.kpis.map(k => `
+      <div class="kpi">
+        <div class="kpi-label">${k.label}</div>
+        <div class="kpi-value ${k.cls}">${k.val}</div>
+      </div>`).join('')}
+  </div>`;
+
+  if (outEdges.length > 0) {
+    html += `<div class="rels-section">
+    <div class="section-title">→ Outgoing relationships (${outEdges.length})</div>`;
+    outEdges.forEach(({edge}) => {
+      const tNode = nodeMap[edge.t];
+      html += `<div class="rel-item" onclick="selectNode('${edge.t}')">
+        <div class="rel-arrow-badge" style="background:rgba(${hexToRgb(edge.color)},0.15);color:${edge.color}">→</div>
+        <div class="rel-info">
+          <div class="rel-target">${tNode ? tNode.icon+' ' : ''}${edge.t}</div>
+          <div class="rel-label">${edge.label}</div>
+          <div class="rel-amount" style="color:${edge.color}">${edge.amount}</div>
+        </div>
+      </div>`;
+    });
+    html += `</div>`;
+  }
+
+  if (inEdges.length > 0) {
+    html += `<div class="rels-section" style="padding-top:0">
+    <div class="section-title">← Incoming relationships (${inEdges.length})</div>`;
+    inEdges.forEach(({edge}) => {
+      const sNode = nodeMap[edge.s];
+      html += `<div class="rel-item" onclick="selectNode('${edge.s}')">
+        <div class="rel-arrow-badge" style="background:rgba(${hexToRgb(edge.color)},0.15);color:${edge.color}">←</div>
+        <div class="rel-info">
+          <div class="rel-target">${sNode ? sNode.icon+' ' : ''}${edge.s}</div>
+          <div class="rel-label">${edge.label}</div>
+          <div class="rel-amount" style="color:${edge.color}">${edge.amount}</div>
+        </div>
+      </div>`;
+    });
+    html += `</div>`;
+  }
+
+  // Properties
+  if (node.props) {
+    html += `<div class="props-section">
+      <div class="section-title" style="margin-top:14px">Key properties</div>
+      <div class="prop-grid">
+        ${node.props.map(p => `
+          <div class="prop-item">
+            <div class="prop-key">${p.k}</div>
+            <div class="prop-val">${p.v}</div>
+          </div>`).join('')}
+      </div>
+    </div>`;
+  }
+
+  panel.innerHTML = html;
+}
+
+// ── Click background to reset ───────────────────────────────────────
+wrap.addEventListener('click', () => {
+  selectedNode = null;
+  Object.values(nodeEls).forEach(({g, ring}) => {
+    g.classList.remove('selected');
+    g.setAttribute('opacity', 1);
+    ring.setAttribute('opacity', 0);
+  });
+  edgeEls.forEach(({path, eLbl}) => {
+    path.classList.remove('highlight','dimmed');
+    path.setAttribute('opacity', .45);
+    eLbl.setAttribute('opacity', 1);
+  });
+  panel.innerHTML = `<div class="default-panel">
+    <div class="dp-title">📊 Dataset Overview</div>
+    <div class="dp-desc">Click any node to explore its properties, relationships, and financial metrics.</div>
+    <div class="dp-metric"><span class="dp-metric-label">Total Charged</span><span class="dp-metric-val">$32,109,768</span></div>
+    <div class="dp-metric blue"><span class="dp-metric-label">Total Paid</span><span class="dp-metric-val">$15,389,731</span></div>
+    <div class="dp-metric amber"><span class="dp-metric-label">Outstanding Balance</span><span class="dp-metric-val">$10,311,399</span></div>
+    <div class="dp-metric red"><span class="dp-metric-label">Bad Debt</span><span class="dp-metric-val">$4,763,276</span></div>
+    <div class="dp-metric purple"><span class="dp-metric-label">Contractual Adj</span><span class="dp-metric-val">$18,172,511</span></div>
+    <div class="dp-metric"><span class="dp-metric-label">Collection Agency Adj</span><span class="dp-metric-val">$206,686</span></div>
+  </div>`;
+});
+
+// ── Pan / zoom ──────────────────────────────────────────────────────
+let vx=-120, vy=-60, vz=0.72;
+let dragging=false, sx=0, sy=0, svx=0, svy=0;
+
+function applyT() { scene.setAttribute('transform',`translate(${vx},${vy}) scale(${vz})`); }
+
+wrap.addEventListener('mousedown', e => {
+  if (e.target.closest('.node')) return;
+  dragging=true; sx=e.clientX; sy=e.clientY; svx=vx; svy=vy;
+  wrap.classList.add('dragging');
+});
+window.addEventListener('mousemove', e => {
+  if (!dragging) return;
+  vx=svx+(e.clientX-sx); vy=svy+(e.clientY-sy); applyT();
+});
+window.addEventListener('mouseup', () => { dragging=false; wrap.classList.remove('dragging'); });
+wrap.addEventListener('wheel', e => {
+  e.preventDefault();
+  const f = e.deltaY < 0 ? 1.1 : 0.91;
+  const rect = wrap.getBoundingClientRect();
+  const mx=e.clientX-rect.left, my=e.clientY-rect.top;
+  vx=mx-f*(mx-vx); vy=my-f*(my-vy);
+  vz=Math.max(0.2,Math.min(2.5,vz*f));
+  applyT();
+},{passive:false});
+
+document.getElementById('btn-zin').onclick  = () => { vz=Math.min(2.5,vz*1.15); applyT(); };
+document.getElementById('btn-zout').onclick = () => { vz=Math.max(0.2,vz/1.15); applyT(); };
+document.getElementById('btn-fit').onclick  = fitAll;
+
+function fitAll() {
+  const xs = NODES.map(n=>n.x), ys = NODES.map(n=>n.y);
+  const minX=Math.min(...xs)-80, minY=Math.min(...ys)-80;
+  const maxX=Math.max(...xs)+80, maxY=Math.max(...ys)+80;
+  const pw=wrap.clientWidth, ph=wrap.clientHeight;
+  vz = Math.min(pw/(maxX-minX), ph/(maxY-minY), 0.9);
+  vx = (pw-(maxX-minX)*vz)/2 - minX*vz;
+  vy = (ph-(maxY-minY)*vz)/2 - minY*vz;
+  applyT();
+}
+
+let labelsOn = true;
+function toggleLabels(btn) {
+  labelsOn = !labelsOn;
+  document.querySelectorAll('.edge-label').forEach(e => {
+    e.setAttribute('visibility', labelsOn ? 'visible' : 'hidden');
+  });
+  btn.textContent = labelsOn ? 'Labels On' : 'Labels Off';
+  btn.classList.toggle('active', labelsOn);
+}
+
+applyT();
+setTimeout(fitAll, 100);
+</script>
+</body>
+</html>
