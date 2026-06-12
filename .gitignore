@@ -47,3 +47,5 @@ frontend/dist/
 docker-compose.override.yml
 .venv/
 .env
+dockers/import/
+dockers/plugins/

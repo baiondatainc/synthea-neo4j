@@ -1,0 +1,47 @@
+services:
+  neo4j:
+    image: neo4j:5.26-community          # pin version — never use :latest in dev
+    container_name: neo4j_rp             # descriptive name for your RP project
+    restart: unless-stopped
+    ports:
+      - "7474:7474"                       # Browser UI
+      - "7687:7687"                       # Bolt (LangChain connects here)
+    environment:
+      - NEO4J_AUTH=neo4j/rp_strong_pass_2025
+      # Memory — tuned for 62GB server
+      # Breakdown: 8G heap + 16G pagecache = 24G Neo4j
+      # Remaining ~38G free for OS, Python/FastAPI, LibreChat, Ollama
+      - NEO4J_server_memory_heap_initial__size=2G
+      - NEO4J_server_memory_heap_max__size=8G
+      - NEO4J_server_memory_pagecache_size=16G
+      # Allow CSV import from /import folder
+      - NEO4J_dbms_security_allow__csv__import__from__file__urls=true
+      # APOC plugin (needed for advanced graph operations)
+      - NEO4J_PLUGINS=["apoc"]
+      # Graph Data Science plugin (needed for PageRank, Louvain etc)
+      # Uncomment when you're ready for GDS algorithms
+      # - NEO4J_PLUGINS=["apoc","graph-data-science"]
+      # Bolt connector settings
+      - NEO4J_dbms_connector_bolt_listen__address=0.0.0.0:7687
+      - NEO4J_dbms_connector_http_listen__address=0.0.0.0:7474
+      # Allow LangChain / Python driver connections from host
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.*,gds.*
+      - NEO4J_dbms_security_procedures_allowlist=apoc.*,gds.*
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+      - ./import:/var/lib/neo4j/import    # CSV files go here for LOAD CSV
+      - ./plugins:/plugins                # APOC jar goes here
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "rp_strong_pass_2025",
+             "RETURN 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+volumes:
+  neo4j_data:
+    driver: local
+  neo4j_logs:
+    driver: local
