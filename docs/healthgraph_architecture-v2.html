@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HealthGraph AI — Architecture &amp; Information Flow</title>
+<style>
+  :root{
+    --ink:#17172A; --ink-soft:#3C3C52; --muted:#6E6E85;
+    --paper:#FBFAF7; --surface:#FFFFFF;
+    --line:#E7E3D9; --line-strong:#D4CFC2;
+    --indigo:#4338CA; --indigo-soft:#ECEBFB; --indigo-ink:#2E2A8A;
+    --teal:#0E8C6A;   --teal-soft:#DCF3EC;   --teal-ink:#0A5F49;
+    --amber:#A6650C;  --amber-soft:#F6ECD8;  --amber-ink:#6E430A;
+    --slate:#5B6472;  --slate-soft:#EBEEF1;  --slate-ink:#2F3640;
+    --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+    --maxw:1080px;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0; background:var(--paper); color:var(--ink);
+    font-family:var(--sans); line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:var(--maxw); margin:0 auto; padding:0 28px}
+  .eyebrow{
+    font-family:var(--mono); font-size:12px; letter-spacing:.14em;
+    text-transform:uppercase; color:var(--muted);
+  }
+
+  /* ── Header ─────────────────────────────────────────── */
+  header{border-bottom:1px solid var(--line); background:var(--surface)}
+  .head-grid{padding:40px 0 34px}
+  .brandrow{display:flex; align-items:center; gap:12px; margin-bottom:22px}
+  .mark{
+    width:30px; height:30px; border-radius:7px; flex:none;
+    background:var(--indigo); position:relative;
+  }
+  .mark::before,.mark::after{
+    content:""; position:absolute; background:#fff; border-radius:2px;
+  }
+  .mark::before{width:6px;height:6px;top:7px;left:7px}
+  .mark::after{width:6px;height:6px;bottom:7px;right:7px;background:var(--teal-soft)}
+  .brandrow span{font-family:var(--mono); font-size:13px; letter-spacing:.04em; color:var(--ink-soft)}
+  h1{
+    font-size:clamp(30px,4.6vw,46px); line-height:1.08; margin:0 0 14px;
+    letter-spacing:-.02em; font-weight:700;
+  }
+  h1 em{font-style:normal; color:var(--indigo)}
+  .lede{font-size:clamp(16px,1.9vw,19px); color:var(--ink-soft); max-width:62ch; margin:0}
+  .meta{display:flex; flex-wrap:wrap; gap:10px; margin-top:26px}
+  .chip{
+    font-family:var(--mono); font-size:12px; padding:6px 11px; border-radius:999px;
+    border:1px solid var(--line-strong); color:var(--ink-soft); background:var(--paper);
+  }
+
+  /* ── Sections ───────────────────────────────────────── */
+  section{padding:54px 0; border-bottom:1px solid var(--line)}
+  .sec-head{margin-bottom:30px; max-width:70ch}
+  .sec-head h2{font-size:clamp(22px,2.6vw,28px); margin:.4em 0 .3em; letter-spacing:-.01em; font-weight:600}
+  .sec-head p{margin:0; color:var(--ink-soft)}
+
+  /* ── Legend ─────────────────────────────────────────── */
+  .legend{display:flex; flex-wrap:wrap; gap:18px; margin-top:8px}
+  .legend div{display:flex; align-items:center; gap:8px; font-size:14px; color:var(--ink-soft)}
+  .sw{width:14px;height:14px;border-radius:4px;border:1px solid rgba(0,0,0,.12)}
+  .sw.i{background:var(--indigo-soft);border-color:var(--indigo)}
+  .sw.t{background:var(--teal-soft);border-color:var(--teal)}
+  .sw.s{background:var(--slate-soft);border-color:var(--slate)}
+  .sw.a{background:var(--amber-soft);border-color:var(--amber)}
+
+  /* ── Diagram frame ──────────────────────────────────── */
+  .diagram{
+    background:var(--surface); border:1px solid var(--line); border-radius:14px;
+    padding:18px; overflow:hidden;
+  }
+  .diagram svg{display:block; width:100%; height:auto}
+  .cap{font-family:var(--mono); font-size:12px; color:var(--muted); margin:14px 2px 0; letter-spacing:.03em}
+
+  /* SVG node styling */
+  .nbox{rx:9}
+  .b-indigo rect{fill:var(--indigo-soft); stroke:var(--indigo)}
+  .b-teal rect{fill:var(--teal-soft); stroke:var(--teal)}
+  .b-slate rect{fill:var(--slate-soft); stroke:var(--slate)}
+  .b-amber rect{fill:var(--amber-soft); stroke:var(--amber)}
+  .b-indigo .t{fill:var(--indigo-ink)} .b-indigo .s{fill:#6862C4}
+  .b-teal .t{fill:var(--teal-ink)}     .b-teal .s{fill:#3F9C82}
+  .b-slate .t{fill:var(--slate-ink)}   .b-slate .s{fill:#717A88}
+  .b-amber .t{fill:var(--amber-ink)}   .b-amber .s{fill:#9A7A3E}
+  rect.node{stroke-width:1.2}
+  .t{font:600 15px var(--sans)}
+  .s{font:400 12px var(--sans)}
+  .flowline{stroke:#A8A399; stroke-width:1.4; fill:none}
+  .loopline{stroke:var(--teal); stroke-width:1.4; fill:none; stroke-dasharray:1 0}
+  .redisline{stroke:var(--indigo); stroke-width:1.4; fill:none}
+  .cacheline{stroke:var(--indigo); stroke-width:1.4; fill:none; stroke-dasharray:5 5}
+  .lbl{font:500 11px var(--mono); fill:var(--muted); letter-spacing:.04em}
+  .lbl-i{font:500 11px var(--mono); fill:var(--indigo); letter-spacing:.04em}
+  g.node-g{transition:transform .15s ease}
+  @media (prefers-reduced-motion:no-preference){
+    g.node-g:hover{transform:translateY(-2px)}
+  }
+
+  /* ── Component grid ─────────────────────────────────── */
+  .grid{display:grid; grid-template-columns:repeat(2,1fr); gap:16px}
+  .card{
+    background:var(--surface); border:1px solid var(--line); border-radius:12px;
+    padding:20px 20px 18px; position:relative; transition:border-color .15s ease, transform .15s ease;
+  }
+  @media (prefers-reduced-motion:no-preference){
+    .card:hover{transform:translateY(-2px); border-color:var(--line-strong)}
+  }
+  .card::before{
+    content:""; position:absolute; left:0; top:18px; bottom:18px; width:3px; border-radius:0 3px 3px 0;
+  }
+  .card.i::before{background:var(--indigo)} .card.t::before{background:var(--teal)}
+  .card.s::before{background:var(--slate)}  .card.a::before{background:var(--amber)}
+  .card .layer{font-family:var(--mono); font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted)}
+  .card h3{margin:8px 0 6px; font-size:18px; font-weight:600; letter-spacing:-.01em}
+  .card p{margin:0 0 12px; color:var(--ink-soft); font-size:14.5px}
+  .mods{display:flex; flex-wrap:wrap; gap:7px}
+  .mod{font-family:var(--mono); font-size:11.5px; padding:3px 8px; border-radius:6px; background:var(--paper); border:1px solid var(--line); color:var(--ink-soft)}
+
+  /* ── Numbered flow ──────────────────────────────────── */
+  .steps{counter-reset:s; display:grid; gap:2px; max-width:none}
+  .step{display:grid; grid-template-columns:46px 1fr; gap:16px; padding:18px 0; border-top:1px solid var(--line)}
+  .step:first-child{border-top:0}
+  .step .n{counter-increment:s; font-family:var(--mono); font-size:18px; color:var(--indigo); font-weight:500}
+  .step .n::before{content:counter(s,decimal-leading-zero)}
+  .step h4{margin:0 0 4px; font-size:16.5px; font-weight:600}
+  .step p{margin:0; color:var(--ink-soft); font-size:14.5px}
+  .step code{font-family:var(--mono); font-size:12.5px; background:var(--paper); border:1px solid var(--line); padding:1px 6px; border-radius:5px; color:var(--ink-soft)}
+
+  .twocol{display:grid; grid-template-columns:repeat(3,1fr); gap:16px}
+  .mode{background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:20px}
+  .mode .tag{font-family:var(--mono); font-size:11px; letter-spacing:.1em; text-transform:uppercase}
+  .mode.i .tag{color:var(--indigo)} .mode.t .tag{color:var(--teal)} .mode.a .tag{color:var(--amber)}
+  .mode h3{margin:8px 0 6px; font-size:17px; font-weight:600}
+  .mode p{margin:0; color:var(--ink-soft); font-size:14px}
+
+  footer{padding:34px 0 56px; color:var(--muted); font-size:13px}
+  footer .wrap{display:flex; flex-wrap:wrap; justify-content:space-between; gap:12px}
+  footer .mono{font-family:var(--mono)}
+
+  @media (max-width:760px){
+    .grid,.twocol{grid-template-columns:1fr}
+    .wrap{padding:0 20px}
+  }
+  a.skip{position:absolute;left:-999px}
+  a.skip:focus{left:12px;top:12px;background:#fff;padding:8px 12px;border:1px solid var(--line-strong);border-radius:8px;z-index:10}
+  :focus-visible{outline:2px solid var(--indigo); outline-offset:2px; border-radius:6px}
+</style>
+</head>
+<body>
+<a href="#flow" class="skip">Skip to flow</a>
+
+<header>
+  <div class="wrap head-grid">
+    <div class="brandrow">
+      <div class="mark" aria-hidden="true"></div>
+      <span>Sutherland Global Services &nbsp;·&nbsp; Radiology Partners</span>
+    </div>
+    <p class="eyebrow">Knowledge graph interrogation platform</p>
+    <h1>HealthGraph&nbsp;AI — <em>architecture &amp; information flow</em></h1>
+    <p class="lede">A conversational layer over the Radiology Partners knowledge graph. Ask the data a question in plain English, get an answer grounded in the graph with its evidence attached, and keep asking follow-ups that remember the thread.</p>
+    <div class="meta">
+      <span class="chip">Neo4j knowledge graph</span>
+      <span class="chip">GraphRAG · vector + traversal</span>
+      <span class="chip">Contextual memory</span>
+      <span class="chip">Redis store &amp; cache</span>
+      <span class="chip">LibreChat UI</span>
+      <span class="chip">Auditable answers</span>
+    </div>
+  </div>
+</header>
+
+<!-- LEGEND -->
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">Reading the diagrams</p>
+      <h2>How the layers are colour-coded</h2>
+      <p>Each component belongs to one of four layers. The colour tells you what kind of work it does — not where it sits in the stack.</p>
+    </div>
+    <div class="legend">
+      <div><span class="sw i"></span> Interface &amp; infrastructure</div>
+      <div><span class="sw t"></span> Conversation &amp; semantic retrieval</div>
+      <div><span class="sw s"></span> Knowledge graph &amp; data</div>
+      <div><span class="sw a"></span> Reporting</div>
+    </div>
+  </div>
+</section>
+
+<!-- RUNTIME FLOW -->
+<section id="flow">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">Information flow — runtime</p>
+      <h2>What happens when someone asks a question</h2>
+      <p>Every message gates through memory first, gets routed to exact or semantic retrieval, is answered only from what the graph returns, then feeds memory so the next follow-up inherits the context. Short-term context lives in Redis — shared across workers, expiring on a TTL — and assembled context is cached there so repeat questions skip the model and the graph. The report branch sits alongside, triggered on demand.</p>
+    </div>
+
+    <div class="diagram">
+      <svg viewBox="0 0 900 640" role="img" aria-labelledby="flowtitle flowdesc">
+        <title id="flowtitle">Runtime request flow</title>
+        <desc id="flowdesc">A question enters from LibreChat through an OpenAI-compatible bridge into contextual memory, is routed to either text-to-Cypher or a hybrid retriever, reads the Neo4j knowledge graph, and returns a grounded answer that loops back to memory. A branch from the knowledge graph produces a narrated stat report.</desc>
+        <defs>
+          <marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+            <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+          </marker>
+        </defs>
+
+        <!-- nodes -->
+        <g class="node-g b-indigo"><rect class="node nbox" x="330" y="20" width="240" height="56"/>
+          <text class="t" x="450" y="44" text-anchor="middle">LibreChat</text>
+          <text class="s" x="450" y="62" text-anchor="middle">chat UI · transcript · auth</text></g>
+
+        <g class="node-g b-indigo"><rect class="node nbox" x="330" y="100" width="240" height="56"/>
+          <text class="t" x="450" y="124" text-anchor="middle">OpenAI-compatible bridge</text>
+          <text class="s" x="450" y="142" text-anchor="middle">/v1/chat/completions</text></g>
+
+        <g class="node-g b-teal"><rect class="node nbox" x="330" y="180" width="240" height="56"/>
+          <text class="t" x="450" y="204" text-anchor="middle">Contextual memory</text>
+          <text class="s" x="450" y="222" text-anchor="middle">resolves follow-ups</text></g>
+
+        <g class="node-g b-teal"><rect class="node nbox" x="355" y="260" width="190" height="46"/>
+          <text class="t" x="450" y="288" text-anchor="middle">Router</text></g>
+
+        <g class="node-g b-slate"><rect class="node nbox" x="250" y="332" width="180" height="56"/>
+          <text class="t" x="340" y="356" text-anchor="middle">Text-to-Cypher</text>
+          <text class="s" x="340" y="374" text-anchor="middle">exact / aggregate</text></g>
+
+        <g class="node-g b-teal"><rect class="node nbox" x="470" y="332" width="180" height="56"/>
+          <text class="t" x="560" y="356" text-anchor="middle">Hybrid retriever</text>
+          <text class="s" x="560" y="374" text-anchor="middle">vectors + graph</text></g>
+
+        <g class="node-g b-slate"><rect class="node nbox" x="330" y="420" width="240" height="58"/>
+          <text class="t" x="450" y="444" text-anchor="middle">Knowledge graph</text>
+          <text class="s" x="450" y="462" text-anchor="middle">Neo4j · metadata · vectors</text></g>
+
+        <g class="node-g b-slate"><rect class="node nbox" x="330" y="522" width="240" height="58"/>
+          <text class="t" x="450" y="546" text-anchor="middle">Grounded answer</text>
+          <text class="s" x="450" y="564" text-anchor="middle">with the numbers + evidence</text></g>
+
+        <g class="node-g b-amber"><rect class="node nbox" x="700" y="420" width="180" height="58"/>
+          <text class="t" x="790" y="444" text-anchor="middle">Stat report</text>
+          <text class="s" x="790" y="462" text-anchor="middle">narrated validation</text></g>
+
+        <g class="node-g b-indigo"><rect class="node nbox" x="700" y="180" width="180" height="56"/>
+          <text class="t" x="790" y="204" text-anchor="middle">Redis</text>
+          <text class="s" x="790" y="222" text-anchor="middle">context store · cache</text></g>
+
+        <!-- main flow arrows -->
+        <line class="flowline" x1="450" y1="76"  x2="450" y2="98"  marker-end="url(#ar)"/>
+        <line class="flowline" x1="450" y1="156" x2="450" y2="178" marker-end="url(#ar)"/>
+        <line class="flowline" x1="450" y1="236" x2="450" y2="258" marker-end="url(#ar)"/>
+        <path class="flowline" d="M450 306 L450 318 L340 318 L340 330" marker-end="url(#ar)"/>
+        <path class="flowline" d="M450 306 L450 318 L560 318 L560 330" marker-end="url(#ar)"/>
+        <path class="flowline" d="M340 388 L340 404 L450 404 L450 418" marker-end="url(#ar)"/>
+        <path class="flowline" d="M560 388 L560 404 L450 404 L450 418" marker-end="url(#ar)"/>
+        <line class="flowline" x1="450" y1="478" x2="450" y2="520" marker-end="url(#ar)"/>
+
+        <!-- report branch -->
+        <line class="flowline" x1="570" y1="449" x2="698" y2="449" marker-end="url(#ar)"/>
+
+        <!-- redis: context store + cache -->
+        <line class="redisline" x1="572" y1="208" x2="698" y2="208" marker-start="url(#ar)" marker-end="url(#ar)"/>
+        <text class="lbl-i" x="635" y="200" text-anchor="middle">focus IDs · TTL</text>
+        <path class="cacheline" d="M572 128 L660 128 L660 190 L698 190" marker-start="url(#ar)" marker-end="url(#ar)"/>
+        <text class="lbl-i" x="612" y="120" text-anchor="middle">context cache</text>
+
+        <!-- memory loop -->
+        <path class="loopline" d="M330 551 L200 551 L200 208 L328 208" marker-end="url(#ar)"/>
+        <text class="lbl" x="210" y="575">context loop</text>
+      </svg>
+      <p class="cap">Request path top-to-bottom · teal loop = answer feeds memory · indigo links = Redis short-term store &amp; context cache · amber branch = on-demand report</p>
+    </div>
+  </div>
+</section>
+
+<!-- BUILD PIPELINE -->
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">Information flow — build time</p>
+      <h2>How the graph is prepared before any question is asked</h2>
+      <p>A one-time pipeline turns the raw Radiology Partners data into a queryable, self-describing, semantically-indexed graph. This runs ahead of serving, then refreshes as data lands.</p>
+    </div>
+
+    <div class="diagram">
+      <svg viewBox="0 0 900 300" role="img" aria-labelledby="buildtitle builddesc">
+        <title id="buildtitle">Build-time pipeline</title>
+        <desc id="builddesc">Radiology Partners parquet data is ingested into a Neo4j knowledge graph, then enriched in parallel by vectorization, behaviour clustering, and metadata catalog loading, leaving the graph ready to query.</desc>
+        <defs>
+          <marker id="ar2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+            <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+          </marker>
+        </defs>
+
+        <g class="node-g b-slate"><rect class="node nbox" x="16" y="124" width="140" height="52"/>
+          <text class="t" x="86" y="148" text-anchor="middle">RP parquet</text>
+          <text class="s" x="86" y="166" text-anchor="middle">source data</text></g>
+
+        <g class="node-g b-slate"><rect class="node nbox" x="190" y="124" width="140" height="52"/>
+          <text class="t" x="260" y="148" text-anchor="middle">Ingestion</text>
+          <text class="s" x="260" y="166" text-anchor="middle">nodes + edges</text></g>
+
+        <g class="node-g b-slate"><rect class="node nbox" x="364" y="124" width="140" height="52"/>
+          <text class="t" x="434" y="148" text-anchor="middle">Neo4j graph</text>
+          <text class="s" x="434" y="166" text-anchor="middle">RP ontology</text></g>
+
+        <g class="node-g b-teal"><rect class="node nbox" x="556" y="36" width="190" height="52"/>
+          <text class="t" x="651" y="60" text-anchor="middle">Vectorize</text>
+          <text class="s" x="651" y="78" text-anchor="middle">node embeddings</text></g>
+
+        <g class="node-g b-teal"><rect class="node nbox" x="556" y="124" width="190" height="52"/>
+          <text class="t" x="651" y="148" text-anchor="middle">Cluster</text>
+          <text class="s" x="651" y="166" text-anchor="middle">behaviour cohorts</text></g>
+
+        <g class="node-g b-slate"><rect class="node nbox" x="556" y="212" width="190" height="52"/>
+          <text class="t" x="651" y="236" text-anchor="middle">Metadata catalog</text>
+          <text class="s" x="651" y="254" text-anchor="middle">names + reference nodes</text></g>
+
+        <g class="node-g b-indigo"><rect class="node nbox" x="780" y="124" width="104" height="52"/>
+          <text class="t" x="832" y="154" text-anchor="middle">Ready</text></g>
+
+        <line class="flowline" x1="156" y1="150" x2="188" y2="150" marker-end="url(#ar2)"/>
+        <line class="flowline" x1="330" y1="150" x2="362" y2="150" marker-end="url(#ar2)"/>
+        <path class="flowline" d="M504 150 L530 150 L530 62 L554 62" marker-end="url(#ar2)"/>
+        <line class="flowline" x1="530" y1="150" x2="554" y2="150" marker-end="url(#ar2)"/>
+        <path class="flowline" d="M504 150 L530 150 L530 238 L554 238" marker-end="url(#ar2)"/>
+        <path class="flowline" d="M746 62 L766 62 L766 150 L778 150" marker-end="url(#ar2)"/>
+        <line class="flowline" x1="746" y1="150" x2="778" y2="150" marker-end="url(#ar2)"/>
+        <path class="flowline" d="M746 238 L766 238 L766 150 L778 150" marker-end="url(#ar2)"/>
+      </svg>
+      <p class="cap">Left-to-right · three enrichments run over the same graph before it serves questions</p>
+    </div>
+  </div>
+</section>
+
+<!-- COMPONENTS -->
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">Architecture</p>
+      <h2>The components, by layer</h2>
+      <p>Each box in the diagrams maps to a real module. The interface is the only piece you don't own — everything below the bridge is your backend, the single source of truth for memory, retrieval, and grounding.</p>
+    </div>
+
+    <div class="grid">
+      <div class="card i">
+        <span class="layer">Interface &amp; bridge</span>
+        <h3>Chat surface &amp; OpenAI bridge</h3>
+        <p>LibreChat is the UI — it stores conversations, handles auth and multi-user, and sends the full transcript on every request. The bridge speaks OpenAI back but routes each turn through the contextual chain.</p>
+        <div class="mods"><span class="mod">LibreChat</span><span class="mod">api/openai_compat.py</span><span class="mod">librechat.yaml</span></div>
+      </div>
+
+      <div class="card t">
+        <span class="layer">Conversation</span>
+        <h3>Contextual memory</h3>
+        <p>Rebuilds the conversation from the transcript, tracks the entities in focus, and rewrites elliptical follow-ups (“those”, “that cohort”) into standalone questions before anything is retrieved.</p>
+        <div class="mods"><span class="mod">memory/conversation_memory.py</span><span class="mod">qa/contextual_chain.py</span></div>
+      </div>
+
+      <div class="card i">
+        <span class="layer">Memory store &amp; cache</span>
+        <h3>Redis</h3>
+        <p>Backs short-term memory: the recent turns, the focus entities, and the exact result IDs the transcript can’t carry — keyed by conversation, shared across workers, expiring on a TTL. It also caches assembled context and answers, so a repeated question returns without touching the model or the graph.</p>
+        <div class="mods"><span class="mod">Redis</span><span class="mod">SessionStore (get/save)</span><span class="mod">TTL · vector cache</span></div>
+      </div>
+
+      <div class="card t">
+        <span class="layer">Retrieval</span>
+        <h3>Hybrid retriever</h3>
+        <p>For semantic questions, vector search finds the right entry nodes, then graph traversal pulls the connected facts and behaviour cohort around them. Exact and aggregate questions take the Cypher path instead.</p>
+        <div class="mods"><span class="mod">qa/hybrid_retriever.py</span><span class="mod">qa/chain.py</span></div>
+      </div>
+
+      <div class="card s">
+        <span class="layer">Knowledge graph</span>
+        <h3>Neo4j &amp; semantic build</h3>
+        <p>The RP ontology with a native vector index for similarity, plus an offline build that vectorizes node profiles and detects behaviour cohorts — the habits and patterns in the data.</p>
+        <div class="mods"><span class="mod">Neo4j</span><span class="mod">semantic/embeddings.py</span><span class="mod">semantic/clustering.py</span></div>
+      </div>
+
+      <div class="card s">
+        <span class="layer">Metadata</span>
+        <h3>Catalog &amp; data dictionary</h3>
+        <p>Makes the graph self-describing: friendly names for properties and coded values, reference nodes for categories, and a schema context injected into prompts so answers use real names instead of raw codes.</p>
+        <div class="mods"><span class="mod">metadata/data_dictionary.yaml</span><span class="mod">metadata/catalog.py</span></div>
+      </div>
+
+      <div class="card a">
+        <span class="layer">Reporting</span>
+        <h3>Statistical validation report</h3>
+        <p>Off the question loop. On demand it runs the full battery of aggregate queries and narrates the figures into a report that explains the numbers and flags anything to validate.</p>
+        <div class="mods"><span class="mod">reports/stat_report.py</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- STEP NARRATIVE -->
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">A question, end to end</p>
+      <h2>Following one message through the system</h2>
+    </div>
+    <div class="steps">
+      <div class="step"><div class="n"></div><div>
+        <h4>The message arrives</h4>
+        <p>Someone types a question in LibreChat. The transcript — this turn plus everything before it — is posted to the OpenAI-compatible bridge.</p></div></div>
+      <div class="step"><div class="n"></div><div>
+        <h4>Memory resolves the follow-up</h4>
+        <p>The question gates through memory first. A fresh question passes straight through; a follow-up like <code>which of those leave a balance?</code> is rewritten into a standalone question using the entities in focus.</p></div></div>
+      <div class="step"><div class="n"></div><div>
+        <h4>The router picks a path</h4>
+        <p>First it checks the Redis cache — if this context has been answered before, the cached result returns immediately and the steps below are skipped. Otherwise, counting and aggregate questions go to text-to-Cypher for exact numbers, and behavioural or “which patients like…” questions go to the hybrid retriever.</p></div></div>
+      <div class="step"><div class="n"></div><div>
+        <h4>The graph is read</h4>
+        <p>The query runs against Neo4j. Reference nodes return friendly names, so a cohort comes back as <code>BCBS Affiliated, Inc.</code> rather than <code>bai</code>. Nothing is answered from the model’s own memory.</p></div></div>
+      <div class="step"><div class="n"></div><div>
+        <h4>The answer is grounded</h4>
+        <p>The model writes the answer strictly from the rows returned, with the Cypher and row count attached as evidence — every figure traces to a query you can see. The assembled context is written to the Redis cache on the way out.</p></div></div>
+      <div class="step"><div class="n"></div><div>
+        <h4>Memory updates for next time</h4>
+        <p>The entities the answer was about become the new focus, persisted in Redis with a TTL so the next follow-up — even on another worker — inherits that context. The loop continues.</p></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- TWO MODES -->
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">Two jobs, one graph</p>
+      <h2>Interrogation, build, and attestation</h2>
+      <p>The same grounding discipline serves three distinct flows.</p>
+    </div>
+    <div class="twocol">
+      <div class="mode t">
+        <span class="tag">Runtime · loop</span>
+        <h3>Interrogation</h3>
+        <p>One question, one grounded answer, context carried forward. The conversational core that lets you validate numbers and ask why.</p>
+      </div>
+      <div class="mode i">
+        <span class="tag">Build · one-time</span>
+        <h3>Preparation</h3>
+        <p>Ingest, vectorize, cluster, and catalog. Turns raw data into a self-describing, semantically-indexed graph before it serves anything.</p>
+      </div>
+      <div class="mode a">
+        <span class="tag">On demand · sweep</span>
+        <h3>Attestation</h3>
+        <p>A full pass over the figures, narrated into a validation report. Not part of the conversation — invoked deliberately when you need the whole picture.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span>HealthGraph AI — knowledge graph interrogation platform</span>
+    <span class="mono">Sutherland Global Services · Radiology Partners</span>
+  </div>
+</footer>
+</body>
+</html>
