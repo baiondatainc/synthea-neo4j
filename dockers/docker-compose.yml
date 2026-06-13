@@ -1,4 +1,60 @@
 services:
+  neo4j-import:
+    image: neo4j:5.26-community
+    container_name: neo4j_import
+    volumes:
+      - neo4j_data:/data
+      - ./import:/var/lib/neo4j/import
+    entrypoint:
+      - "neo4j-admin"
+      - "database"
+      - "import"
+      - "full"
+      - "neo4j"
+      - "--nodes=Patient=/var/lib/neo4j/import/nodes_Patient.csv"
+      - "--nodes=Practice=/var/lib/neo4j/import/nodes_Practice.csv"
+      - "--nodes=Location=/var/lib/neo4j/import/nodes_Location.csv"
+      - "--nodes=InsurancePlan=/var/lib/neo4j/import/nodes_InsurancePlan.csv"
+      - "--nodes=Campaign=/var/lib/neo4j/import/nodes_Campaign.csv"
+      - "--nodes=BirdeyeReview=/var/lib/neo4j/import/nodes_BirdeyeReview.csv"
+      - "--nodes=Visit=/var/lib/neo4j/import/nodes_Visit.csv"
+      - "--nodes=Charge=/var/lib/neo4j/import/nodes_Charge.csv"
+      - "--nodes=Transaction=/var/lib/neo4j/import/nodes_Transaction.csv"
+      - "--nodes=Statement=/var/lib/neo4j/import/nodes_Statement.csv"
+      - "--nodes=RCCall=/var/lib/neo4j/import/nodes_RCCall.csv"
+      - "--nodes=IVRInbound=/var/lib/neo4j/import/nodes_IVRInbound.csv"
+      - "--nodes=DiallerCall=/var/lib/neo4j/import/nodes_DiallerCall.csv"
+      - "--nodes=PhoneBridge=/var/lib/neo4j/import/nodes_PhoneBridge.csv"
+      - "--nodes=DiagnosisCode=/var/lib/neo4j/import/nodes_DiagnosisCode.csv"
+      - "--nodes=ProcedureCode=/var/lib/neo4j/import/nodes_ProcedureCode.csv"
+      - "--relationships=REGISTERED_AT=/var/lib/neo4j/import/rels_REGISTERED_AT.csv"
+      - "--relationships=BELONGS_TO_PRACTICE=/var/lib/neo4j/import/rels_BELONGS_TO_PRACTICE.csv"
+      - "--relationships=ISSUED_BY_PRACTICE=/var/lib/neo4j/import/rels_ISSUED_BY_PRACTICE.csv"
+      - "--relationships=RUN_BY=/var/lib/neo4j/import/rels_RUN_BY.csv"
+      - "--relationships=REVIEWS=/var/lib/neo4j/import/rels_REVIEWS.csv"
+      - "--relationships=HAD_VISIT=/var/lib/neo4j/import/rels_HAD_VISIT.csv"
+      - "--relationships=PERFORMED_AT=/var/lib/neo4j/import/rels_PERFORMED_AT.csv"
+      - "--relationships=UNDER_PLAN=/var/lib/neo4j/import/rels_UNDER_PLAN.csv"
+      - "--relationships=HAS_CHARGE=/var/lib/neo4j/import/rels_HAS_CHARGE.csv"
+      - "--relationships=PART_OF_VISIT=/var/lib/neo4j/import/rels_PART_OF_VISIT.csv"
+      - "--relationships=AT_LOCATION=/var/lib/neo4j/import/rels_AT_LOCATION.csv"
+      - "--relationships=DIAGNOSED_WITH=/var/lib/neo4j/import/rels_DIAGNOSED_WITH.csv"
+      - "--relationships=USES_PROCEDURE=/var/lib/neo4j/import/rels_USES_PROCEDURE.csv"
+      - "--relationships=SETTLES=/var/lib/neo4j/import/rels_SETTLES.csv"
+      - "--relationships=HAS_TRANSACTION=/var/lib/neo4j/import/rels_HAS_TRANSACTION.csv"
+      - "--relationships=RECEIVED_STATEMENT=/var/lib/neo4j/import/rels_RECEIVED_STATEMENT.csv"
+      - "--relationships=PART_OF_CAMPAIGN=/var/lib/neo4j/import/rels_PART_OF_CAMPAIGN.csv"
+      - "--relationships=ATTRIBUTED_TO_PHONE=/var/lib/neo4j/import/rels_ATTRIBUTED_TO_PHONE.csv"
+      - "--relationships=IDENTIFIED_BY_PHONE=/var/lib/neo4j/import/rels_IDENTIFIED_BY_PHONE.csv"
+      - "--relationships=CALLED_IVR=/var/lib/neo4j/import/rels_CALLED_IVR.csv"
+      - "--relationships=CONTACTED_BY_DIALLER=/var/lib/neo4j/import/rels_CONTACTED_BY_DIALLER.csv"
+      - "--relationships=BRIDGES_TO_PATIENT=/var/lib/neo4j/import/rels_BRIDGES_TO_PATIENT.csv"
+      - "--overwrite-destination=true"
+      - "--skip-bad-relationships=true"
+      - "--skip-duplicate-nodes=true"
+      - "--high-parallel-io=on"
+      - "--verbose"
+    profiles: ["import"]
   neo4j:
     image: neo4j:5.26-community
     container_name: neo4j_rp
