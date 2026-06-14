@@ -26,6 +26,24 @@ class Settings(BaseSettings):
     synthea_data_dir: str = Field("/home/siva/work/codebase/RP/synthea-neo4j/generator/input", env="SYNTHEA_DATA_DIR")
     batch_size: int = Field(500, env="BATCH_SIZE")
 
+    # ── v2: Redis + memory + cache ───────────────────────────────────────
+    redis_url: str = Field("redis://rp-redis:6379/0", env="REDIS_URL")
+    session_ttl_seconds: int = Field(86400, env="SESSION_TTL")
+    cache_ttl_seconds: int = Field(3600, env="CACHE_TTL")
+    memory_enabled: bool = Field(True, env="MEMORY_ENABLED")
+    cache_enabled: bool = Field(True, env="CACHE_ENABLED")
+    # Bump when graph schema or ingestion changes to invalidate the cache.
+    schema_version: str = Field("v1", env="SCHEMA_VERSION")
+
+    # ── v2: Guardrails ───────────────────────────────────────────────────
+    guardrails_enabled: bool = Field(True, env="GUARDRAILS_ENABLED")
+    guardrails_redact_output: bool = Field(True, env="GUARDRAILS_REDACT_OUTPUT")
+    cypher_row_limit: int = Field(100, env="CYPHER_ROW_LIMIT")
+    cypher_timeout_seconds: int = Field(15, env="CYPHER_TIMEOUT")
+
+    # ── v2: Hybrid retriever (reserved for phase D) ──────────────────────
+    hybrid_retriever_enabled: bool = Field(False, env="HYBRID_RETRIEVER_ENABLED")
+
     class Config:
         env_file = ".env"
         extra = "ignore"

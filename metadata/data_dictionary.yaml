@@ -1,0 +1,194 @@
+# RP Knowledge Graph — data dictionary
+#
+# Friendly names for coded values + schema descriptions injected into the
+# text2cypher prompt and used to swap codes for human-readable labels in
+# answer text and chart artifacts.
+#
+# Keep this file authoritative — `catalog.py` loads it once at startup.
+
+labels:
+  Patient:
+    description: "An RP patient with demographics, cohort flags, and rollup financials."
+    pii: ["first_name", "middle_name", "last_name", "phone_norm", "cell_norm", "email", "dob", "zip"]
+    properties:
+      payor_cohort:
+        description: "Coarse payor classification."
+        values:
+          bai: "BCBS Affiliated, Inc."
+          sapa: "Self-pay"
+          nraa: "Non-resident / out-of-area"
+          tennessee: "Tennessee-specific cohort"
+          atlanta_404: "Atlanta 404 cohort"
+      call_tier:
+        description: "Outreach intensity tier."
+        values:
+          high: "High-touch (>= 6 calls in window)"
+          mid: "Mid-touch (3-5 calls)"
+          low: "Low-touch (<= 2 calls)"
+          none: "Never contacted"
+      propensity_grade:
+        description: "Imagine model's propensity-to-pay grade."
+      gender:
+        description: "Patient self-reported gender."
+
+  Practice:
+    description: "An RP practice / source database. Keyed by Source_Database_Code."
+
+  Location:
+    description: "A clinical site that performs visits."
+    properties:
+      location_type:
+        description: "Site classification (hospital, imaging center, etc.)."
+
+  InsurancePlan:
+    description: "A payer plan that covers visits."
+    properties:
+      plan_type:
+        description: "Coverage type — HMO, PPO, Medicare, etc."
+
+  Visit:
+    description: "A patient encounter at a location."
+
+  Charge:
+    description: "A billable line item for a visit (one CPT/HCPCS procedure)."
+    properties:
+      line_status:
+        description: "Lifecycle state of the charge line."
+      place_of_service:
+        description: "POS code per CMS — 11=office, 21=inpatient, 22=outpatient, etc."
+
+  Transaction:
+    description: "A payment or adjustment posted against a charge."
+    properties:
+      adjustment_bucket:
+        description: "High-level adjustment category."
+        values:
+          contractual: "Contractual write-off (per payer agreement)"
+          bad_debt: "Sent to bad debt"
+          collection_agency: "Placed with collection agency"
+          refund_reversal: "Refund or payment reversal"
+          other: "Other / uncategorized adjustment"
+      paysource:
+        description: "Who paid (patient, insurance, secondary, etc.)."
+
+  Statement:
+    description: "A billing statement sent to a patient."
+
+  RCCall:
+    description: "A RingCentral outbound dial event."
+
+  IVRInbound:
+    description: "An inbound IVR session (pay-by-phone or self-service)."
+
+  DiallerCall:
+    description: "An outbound dialler call event."
+
+  PhoneBridge:
+    description: "Mapping between phone numbers and known patients."
+    pii: ["phone_norm"]
+
+  Campaign:
+    description: "Named outreach campaign."
+
+  BirdeyeReview:
+    description: "Patient-posted review from Birdeye for a location."
+    properties:
+      rating:
+        description: "Star rating 1-5."
+
+  DiagnosisCode:
+    description: "ICD-10 diagnosis code."
+
+  ProcedureCode:
+    description: "CPT/HCPCS procedure code."
+
+relationships:
+  REGISTERED_AT:
+    description: "Patient is registered at a Practice."
+  BELONGS_TO_PRACTICE:
+    description: "Location belongs to a Practice."
+  ISSUED_BY_PRACTICE:
+    description: "InsurancePlan is recognized by a Practice."
+  HAD_VISIT:
+    description: "Patient had a Visit."
+  PERFORMED_AT:
+    description: "Visit was performed at a Location."
+  UNDER_PLAN:
+    description: "Visit was covered under an InsurancePlan."
+  HAS_CHARGE:
+    description: "Patient was charged."
+  PART_OF_VISIT:
+    description: "Charge belongs to a Visit."
+  AT_LOCATION:
+    description: "Charge was incurred at a Location."
+  DIAGNOSED_WITH:
+    description: "Charge is associated with a DiagnosisCode."
+  USES_PROCEDURE:
+    description: "Charge uses a ProcedureCode."
+  SETTLES:
+    description: "Transaction settles a Charge (payment or adjustment)."
+  HAS_TRANSACTION:
+    description: "Patient owns a Transaction."
+  RECEIVED_STATEMENT:
+    description: "Patient received a Statement."
+  PART_OF_CAMPAIGN:
+    description: "RCCall participates in a Campaign."
+  ATTRIBUTED_TO_PHONE:
+    description: "RCCall is attributable to a PhoneBridge entry."
+  IDENTIFIED_BY_PHONE:
+    description: "Patient is identified by a PhoneBridge entry."
+  CALLED_IVR:
+    description: "Patient called the IVR system."
+  CONTACTED_BY_DIALLER:
+    description: "Patient was dialled by the outbound dialler."
+  REVIEWS:
+    description: "BirdeyeReview is about a Location."
+  RUN_BY:
+    description: "Campaign is run by a Practice."
+
+# Allowed topic patterns — used by guardrails/input.py to reject off-topic
+# or jailbreak-style questions. Lower-case substring match on the question.
+allowed_topics:
+  - patient
+  - patients
+  - practice
+  - practices
+  - location
+  - locations
+  - visit
+  - encounter
+  - charge
+  - charges
+  - balance
+  - bad debt
+  - payor
+  - payment
+  - transaction
+  - insurance
+  - statement
+  - campaign
+  - dialler
+  - dialer
+  - ringcentral
+  - ivr
+  - birdeye
+  - review
+  - rating
+  - cohort
+  - procedure
+  - diagnosis
+  - icd
+  - cpt
+  - modality
+  - radiology
+  - imaging
+  - tennessee
+  - atlanta
+  - state
+  - zip
+  - propensity
+  - collection
+  - self-pay
+  - self pay
+  - graph
+  - schema

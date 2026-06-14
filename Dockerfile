@@ -13,6 +13,10 @@ COPY api ./api
 COPY graph ./graph
 COPY ingest ./ingest
 COPY qa ./qa
+COPY metadata ./metadata
+COPY guardrails ./guardrails
+COPY memory ./memory
+COPY cache ./cache
 
 RUN uv pip install --system --no-cache .
 

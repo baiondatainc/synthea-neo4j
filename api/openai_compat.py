@@ -19,6 +19,8 @@ from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 
 from qa.chain import stream_qa_response
+from config import get_settings
+from guardrails import redact_text
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -277,13 +279,20 @@ def sse_done() -> str:
 
 # ── Streaming generator ───────────────────────────────────────────────────────
 
-async def generate_stream(question: str, model: str) -> AsyncGenerator[str, None]:
+async def generate_stream(
+    question: str,
+    model: str,
+    conversation_id: str | None = None,
+    use_cache: bool = True,
+) -> AsyncGenerator[str, None]:
     """
     Buffers all LLM tokens, then emits:
-      1. Full answer text
-      2. Cypher code block
-      3. Chart artifact (if data is chartable)
-      4. [DONE]
+      1. (optional) Follow-up rewrite notice
+      2. (optional) Cache-hit marker
+      3. Full answer text
+      4. Cypher code block
+      5. Chart artifact (if data is chartable)
+      6. [DONE]
 
     Wrapped in try/except so any crash yields a clean error message
     instead of a hard disconnect ("terminated").
@@ -291,13 +300,25 @@ async def generate_stream(question: str, model: str) -> AsyncGenerator[str, None
     buffered_tokens = []
     neo4j_results = []
     cypher_query = ""
+    rewritten_question = None
+    cache_hit = False
 
     try:
-        async for chunk in stream_qa_response(question):
+        async for chunk in stream_qa_response(
+            question,
+            conversation_id=conversation_id,
+            use_cache=use_cache,
+        ):
             t = chunk["type"]
 
             if t == "token":
                 buffered_tokens.append(chunk["data"])
+
+            elif t == "rewrite":
+                rewritten_question = chunk.get("data", "")
+
+            elif t == "cache_hit":
+                cache_hit = True
 
             elif t == "cypher":
                 cypher_query = chunk.get("data", "")
@@ -305,6 +326,13 @@ async def generate_stream(question: str, model: str) -> AsyncGenerator[str, None
 
             elif t == "end":
                 break
+
+            elif t == "blocked":
+                # Guardrail rejected the input or generated Cypher.
+                # Stream the reason as the answer text and stop cleanly.
+                yield sse_chunk(f"⚠️ {chunk['data']}", model)
+                yield sse_done()
+                return
 
             elif t == "error":
                 error_msg = chunk["data"]
@@ -327,9 +355,22 @@ async def generate_stream(question: str, model: str) -> AsyncGenerator[str, None
         yield sse_done()
         return
 
-    # ── 1. Answer text ────────────────────────────────────────────────────
+    # ── 0a. Follow-up rewrite notice (only if memory rewrote the question) ─
+    if rewritten_question:
+        yield sse_chunk(
+            f"> _Interpreted as: {rewritten_question}_\n\n",
+            model,
+        )
+
+    # ── 0b. Cache marker — subtle, just so users know responses can repeat ─
+    if cache_hit:
+        yield sse_chunk("> _(cached)_\n\n", model)
+
+    # ── 1. Answer text (belt-and-suspenders redaction; rows already redacted) ─
     full_answer = "".join(buffered_tokens)
     if full_answer:
+        if get_settings().guardrails_redact_output:
+            full_answer = redact_text(full_answer)
         yield sse_chunk(full_answer, model)
 
     # ── 2. Cypher block ───────────────────────────────────────────────────
@@ -369,6 +410,41 @@ async def generate_stream(question: str, model: str) -> AsyncGenerator[str, None
 
 # ── /v1/chat/completions ──────────────────────────────────────────────────────
 
+def _extract_conversation_id(body: dict, request: Request) -> str | None:
+    """Find a stable per-conversation identifier from the OpenAI-style body.
+
+    LibreChat doesn't reliably send a conversation_id in the standard OpenAI
+    request shape, so we check a few common locations and fall back to a hash
+    of the first user message — stable across turns of the same conversation
+    because LibreChat re-sends the full transcript on every turn.
+    """
+    meta = body.get("metadata") or {}
+    if isinstance(meta, dict):
+        for k in ("conversation_id", "conversationId", "chat_id", "chatId"):
+            if meta.get(k):
+                return str(meta[k])
+
+    for k in ("conversation_id", "conversationId", "chat_id", "chatId"):
+        if body.get(k):
+            return str(body[k])
+
+    if body.get("user"):
+        return f"user-{body['user']}"
+
+    header_id = request.headers.get("x-conversation-id")
+    if header_id:
+        return header_id
+
+    messages = body.get("messages") or []
+    first_user = next((m for m in messages if m.get("role") == "user"), None)
+    if first_user:
+        import hashlib
+        content = first_user.get("content", "")
+        seed = content if isinstance(content, str) else str(content)
+        return "anon-" + hashlib.sha256(seed.encode()).hexdigest()[:16]
+    return None
+
+
 @router.post("/v1/chat/completions")
 async def chat_completions(request: Request):
     try:
@@ -389,10 +465,13 @@ async def chat_completions(request: Request):
     if not question:
         return JSONResponse(status_code=400, content={"error": "No user message"})
 
-    logger.info(f"Question: {question[:80]}")
+    conversation_id = _extract_conversation_id(body, request)
+    nocache = request.query_params.get("nocache", "").lower() in ("1", "true", "yes")
+    use_cache = not nocache
+    logger.info(f"Question: {question[:80]}  conv_id={conversation_id}  cache={use_cache}")
 
     return StreamingResponse(
-        generate_stream(question, model),
+        generate_stream(question, model, conversation_id=conversation_id, use_cache=use_cache),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -413,3 +492,13 @@ async def list_models():
             }
         ],
     }
+
+
+# ── Cache admin (Phase C) ─────────────────────────────────────────────────────
+
+@router.post("/cache/clear")
+async def cache_clear():
+    """Wipe the answer cache. Use after a schema/ingestion change."""
+    from cache import get_answer_cache
+    deleted = get_answer_cache().clear_all()
+    return {"cleared": deleted}

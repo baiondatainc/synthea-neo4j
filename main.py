@@ -4,12 +4,15 @@ Entry point for the SGS — RP
 Knowledge Graph QA system (HealthGraph AI).
 
 Usage:
-  python main.py serve          # start API server (LibreChat-compatible)
-  python main.py ingest         # ingest RP parquet data into Neo4j (Bolt)
-  python main.py ingest --drop  # drop all data then re-ingest
-  python main.py schema         # create constraints + indexes only
-  python main.py stats          # print graph statistics
-  python main.py ask "question" # one-off question (no streaming)
+  python main.py serve              # start API server (LibreChat-compatible)
+  python main.py ingest             # ingest RP parquet data into Neo4j (Bolt)
+  python main.py ingest --drop      # drop all data then re-ingest
+  python main.py schema             # create constraints + indexes only
+  python main.py stats              # print graph statistics
+  python main.py vectorize          # embed Patients (Phase D hybrid retriever)
+  python main.py vectorize --force  # re-embed every Patient (overwrite existing)
+  python main.py vectorize --limit 5000   # embed only the first N
+  python main.py ask "question"     # one-off question (no streaming)
 """
 import sys
 import logging
@@ -113,6 +116,13 @@ def cmd_stats():
     print()
 
 
+def cmd_vectorize(force: bool = False, limit: int = 1_000_000):
+    """Embed every Patient with sentence-transformers + write to Neo4j vector index."""
+    from semantic.embeddings import vectorize_patients
+    summary = vectorize_patients(force=force, limit=limit)
+    print(f"\n✓ Vectorize complete: {summary}\n")
+
+
 async def cmd_ask(question: str):
     from qa.chain import stream_qa_response
     print(f"\n❓ {question}\n")
@@ -141,6 +151,16 @@ def main():
         cmd_schema()
     elif args[0] == "stats":
         cmd_stats()
+    elif args[0] == "vectorize":
+        force = "--force" in args
+        limit = 1_000_000
+        for i, a in enumerate(args):
+            if a == "--limit" and i + 1 < len(args):
+                try:
+                    limit = int(args[i + 1])
+                except ValueError:
+                    pass
+        cmd_vectorize(force=force, limit=limit)
     elif args[0] == "ask" and len(args) > 1:
         question = " ".join(args[1:])
         asyncio.run(cmd_ask(question))

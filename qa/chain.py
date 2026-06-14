@@ -2,15 +2,8 @@
 LangChain RAG pipeline with streaming and result extraction for charting.
 
 Architecture:
-  cypher_llm → text2cypher (Neo4j fine-tuned, Ollama) — generates Cypher only
-  qa_llm     → your configured model (Ollama/Anthropic/OpenAI) — explains results
-
-Fixes applied:
-  1. import re moved to top level — not inside a function
-  2. get_cypher_llm() — falls back gracefully if text2cypher not installed yet
-  3. validate_cypher() — catches GROUP BY, missing MATCH, bare aggregation in ORDER BY
-  4. run_chain() — clean Neo4j error messages surfaced to user
-  5. CYPHER_GENERATION_PROMPT — matches text2cypher fine-tune format + few-shot examples
+  input guardrail → cypher_llm (text2cypher) → cypher guardrail (read-only,
+  schema, row cap) → Neo4j → output redaction → qa_llm → streamed answer
 """
 import re
 import logging
@@ -26,6 +19,17 @@ from langchain_ollama import ChatOllama
 from config import get_settings
 from graph.schema_text import GRAPH_SCHEMA
 from qa.llm import get_llm
+from metadata.catalog import get_catalog
+from guardrails import check_input, check_cypher, redact_rows, redact_text
+from memory import (
+    get_session_store,
+    get_focus_store,
+    extract_entity_ids,
+    rewrite_question,
+)
+from cache import get_answer_cache, make_cache_key
+from qa.router import route, Path
+from qa.hybrid_retriever import stream_hybrid_response
 
 logger = logging.getLogger(__name__)
 
@@ -49,61 +53,86 @@ class StreamingCallback(AsyncCallbackHandler):
         pass
 
 
-# ── Neo4j Graph ───────────────────────────────────────────────────────────────
+# ── Guarded Neo4j Graph ───────────────────────────────────────────────────────
+
+class GuardrailBlocked(Exception):
+    """Raised when the Cypher guardrail rejects a query."""
+
+
+class GuardedNeo4jGraph(Neo4jGraph):
+    """Drop-in Neo4jGraph that:
+      - runs the Cypher guardrail (read-only, schema, row cap) before execution
+      - applies session-level timeout
+      - redacts PII columns from result rows before they are returned to the chain
+    """
+
+    def query(self, query: str, params: dict | None = None) -> list[dict]:
+        settings = get_settings()
+
+        if settings.guardrails_enabled:
+            check = check_cypher(query)
+            if not check.ok:
+                logger.warning(f"Cypher guardrail blocked: {check.reason}\nQuery: {query[:300]}")
+                raise GuardrailBlocked(check.reason)
+            query = check.payload
+
+        try:
+            rows = super().query(query, params)
+        except Exception:
+            raise
+
+        if settings.guardrails_enabled and settings.guardrails_redact_output:
+            rows = redact_rows(rows)
+        return rows
+
+
+# ── Neo4j Graph factory ───────────────────────────────────────────────────────
 
 def get_neo4j_graph() -> Neo4jGraph:
     settings = get_settings()
-    graph = Neo4jGraph(
+    catalog = get_catalog()
+    graph = GuardedNeo4jGraph(
         url=settings.neo4j_uri,
         username=settings.neo4j_username,
         password=settings.neo4j_password,
         enhanced_schema=False,
     )
     graph.refresh_schema()
-    graph.schema = GRAPH_SCHEMA
+    # Augment the schema text with friendly descriptions from the data
+    # dictionary so the Cypher-generation prompt has human context.
+    graph.schema = f"{GRAPH_SCHEMA}\n\n{catalog.schema_addendum()}"
     return graph
 
 
 # ── Cypher specialist LLM ─────────────────────────────────────────────────────
 
 def get_cypher_llm():
-    """
-    Returns the Neo4j text2cypher fine-tuned model running locally via Ollama.
+    """Returns the Neo4j text2cypher fine-tuned model running locally via Ollama.
 
-    One-time setup:
-      1. ollama pull gemma2:9b
-      2. git clone https://huggingface.co/neo4j/text2cypher-gemma-2-9b-it-finetuned-2024v1
-      3. Create Modelfile (see project README)
-      4. ollama create text2cypher -f Modelfile
-      5. ollama run text2cypher "test"   <- verify it responds
-
-    Falls back to the default configured LLM if text2cypher is not yet available
-    so the app keeps working while you set up the specialist model.
+    Falls back to the default configured LLM if text2cypher is not yet
+    available so the app keeps working while you set up the specialist model.
     """
     settings = get_settings()
 
     try:
         llm = ChatOllama(
-            model="text2cypher",      # Neo4j fine-tuned model registered in Ollama
+            model="text2cypher",
             base_url=settings.ollama_base_url,
-            temperature=0,            # deterministic — Cypher must be exact
-            num_predict=512,          # Cypher is short — cap tokens early
+            temperature=0,
+            num_predict=512,
         )
         logger.info("Cypher LLM: using Neo4j text2cypher specialist model")
         return llm
     except Exception as e:
         logger.warning(
             f"text2cypher not available ({e}). "
-            "Falling back to default LLM for Cypher generation. "
-            "To fix: ollama create text2cypher -f Modelfile"
+            "Falling back to default LLM for Cypher generation."
         )
         return get_llm(streaming=False)
 
 
 # ── Prompts ───────────────────────────────────────────────────────────────────
 
-# Prompt format matches the neo4j/text2cypher-2024v1 fine-tune training template.
-# Few-shot examples cover the most common Synthea healthcare queries.
 CYPHER_GENERATION_PROMPT = PromptTemplate(
     input_variables=["schema", "question"],
     template="""Generate Cypher statement to query a graph database.
@@ -126,65 +155,7 @@ STRICT CYPHER RULES:
   WRONG:  RETURN p.gender
   CORRECT: RETURN p.gender AS gender
 - Output ONLY raw Cypher — no markdown, no backticks, no explanation
-
-FEW-SHOT EXAMPLES:
-
-Q: What is the gender distribution of patients?
-MATCH (p:Patient)
-RETURN p.gender AS gender, count(p) AS count
-ORDER BY count DESC
-
-Q: What are the top 10 most common conditions?
-MATCH (p:Patient)-[:HAS_CONDITION]->(c:Condition)
-RETURN c.description AS condition, count(p) AS patient_count
-ORDER BY patient_count DESC
-LIMIT 10
-
-Q: Which medications are most frequently prescribed?
-MATCH (p:Patient)-[:PRESCRIBED]->(m:Medication)
-RETURN m.description AS medication, count(p) AS frequency
-ORDER BY frequency DESC
-LIMIT 25
-
-Q: How many patients per encounter class?
-MATCH (p:Patient)-[:HAD_ENCOUNTER]->(e:Encounter)
-RETURN e.encounterclass AS encounter_class, count(p) AS count
-ORDER BY count DESC
-
-Q: Show me the breakdown of encounter types
-MATCH (e:Encounter)
-RETURN e.encounterclass AS type, count(e) AS count
-ORDER BY count DESC
-
-Q: Show me the trend of encounters by year
-MATCH (e:Encounter)
-WHERE e.start IS NOT NULL
-RETURN substring(e.start, 0, 4) AS year, count(e) AS encounter_count
-ORDER BY year ASC
-
-Q: Show patients with diabetes
-MATCH (p:Patient)-[:HAS_CONDITION]->(c:Condition)
-WHERE toLower(c.description) CONTAINS 'diabetes'
-RETURN p.id AS patient_id, p.gender AS gender, c.description AS condition
-LIMIT 25
-
-Q: Which providers treat the most patients?
-MATCH (e:Encounter)-[:SEEN_BY]->(prov:Provider)
-RETURN prov.name AS provider, count(e) AS encounter_count
-ORDER BY encounter_count DESC
-LIMIT 10
-
-Q: What are the most common allergies?
-MATCH (p:Patient)-[:ALLERGIC_TO]->(a:Allergen)
-RETURN a.description AS allergen, count(p) AS patient_count
-ORDER BY patient_count DESC
-LIMIT 15
-
-Q: Show me patients prescribed medication for a condition they have
-MATCH (p:Patient)-[:HAS_CONDITION]->(c:Condition)
-MATCH (p)-[:PRESCRIBED]->(m:Medication)
-RETURN p.id AS patient_id, c.description AS condition, m.description AS medication
-LIMIT 25
+- Use only READ operations — never CREATE, DELETE, MERGE, SET, or REMOVE
 
 The question is:
 {question}""",
@@ -196,6 +167,8 @@ QA_GENERATION_PROMPT = PromptTemplate(
 
 Given these graph query results, provide a clear plain-English answer.
 Include: a direct answer, key numbers/patterns, and any notable insights.
+If a value is marked [name-redacted], [phone-redacted], etc., refer to the
+entity by its identifier or position instead of inventing names.
 
 Question: {question}
 Graph Results: {context}
@@ -204,50 +177,13 @@ Answer:""",
 )
 
 
-# ── Cypher validator ──────────────────────────────────────────────────────────
-
-def validate_cypher(cypher: str) -> str | None:
-    """
-    Lightweight pre-flight check — catches common LLM mistakes before Neo4j runs the query.
-    Returns an error string if the query looks wrong, None if it looks OK.
-
-    Does NOT execute the query — that is Neo4j's job.
-    Logs warnings rather than blocking so valid edge cases still pass through.
-    """
-    if not cypher or not cypher.strip():
-        return "Empty Cypher query generated"
-
-    upper = cypher.upper()
-
-    # GROUP BY does not exist in Cypher
-    if "GROUP BY" in upper:
-        return "Generated Cypher contains GROUP BY — not valid in Cypher"
-
-    # Must have at least one of these keywords
-    if not any(kw in upper for kw in ["MATCH", "RETURN", "CALL", "CREATE", "MERGE"]):
-        return "Query missing MATCH or RETURN clause"
-
-    # Bare aggregation in ORDER BY without aliasing
-    # e.g. ORDER BY COUNT(p) should be ORDER BY cnt
-    if re.search(r'ORDER\s+BY\s+\w*COUNT\s*\(', cypher, re.IGNORECASE):
-        before_order = upper.split("ORDER")[0]
-        if "WITH" not in upper and " AS " not in before_order:
-            return "Aggregation used directly in ORDER BY — alias it first with AS"
-
-    return None  # looks OK
-
-
 # ── Build chain ───────────────────────────────────────────────────────────────
 
 def build_chain(streaming_callback: StreamingCallback = None) -> GraphCypherQAChain:
     graph = get_neo4j_graph()
 
-    # Specialist: text2cypher fine-tuned model — Cypher generation only
-    # No streaming needed here — Cypher output is short and must be complete
     cypher_llm = get_cypher_llm()
 
-    # Generalist: your configured model — explains results to the user
-    # Streaming enabled so tokens appear progressively in LibreChat
     qa_llm = get_llm(streaming=bool(streaming_callback))
     if streaming_callback:
         qa_llm.callbacks = [streaming_callback]
@@ -269,15 +205,6 @@ def build_chain(streaming_callback: StreamingCallback = None) -> GraphCypherQACh
 # ── Extract results from intermediate steps ───────────────────────────────────
 
 def extract_from_steps(intermediate_steps: list) -> tuple[str, list]:
-    """
-    Pulls the generated Cypher query and raw Neo4j results out of
-    LangChain's intermediate_steps structure.
-
-    LangChain stores steps as a mixed list of dicts and tuples depending
-    on the chain version — both formats handled here.
-
-    Returns: (cypher_string, results_list)
-    """
     cypher = ""
     results = []
 
@@ -304,23 +231,137 @@ def extract_from_steps(intermediate_steps: list) -> tuple[str, list]:
 
 # ── Streaming generator ───────────────────────────────────────────────────────
 
-async def stream_qa_response(question: str) -> AsyncGenerator[dict, None]:
-    """
-    Runs the full RAG pipeline and yields events as they complete.
+async def stream_qa_response(
+    question: str,
+    conversation_id: str | None = None,
+    use_cache: bool = True,
+) -> AsyncGenerator[dict, None]:
+    """Runs the full RAG pipeline and yields events as they complete.
+
+    `conversation_id` enables Phase B memory: prior-turn transcript + focus
+    entities are used to rewrite elliptical follow-ups; after a successful
+    answer, the user/assistant pair and result IDs are persisted.
+
+    `use_cache` enables Phase C answer cache: identical (rewritten) questions
+    skip the LLM/Neo4j and replay the stored bundle. Set False to force a
+    fresh run.
 
     Yield types:
-      {"type": "token",  "data": "<word>"}           — QA answer token
-      {"type": "cypher", "data": "<cypher>",
-                         "results": [...]}            — query + raw results
-      {"type": "end",    "data": ""}                  — pipeline complete
-      {"type": "error",  "data": "<message>"}         — something went wrong
+      {"type": "token",      "data": "<word>"}                        — QA answer token
+      {"type": "rewrite",    "data": "<rewritten question>"}          — only on follow-up rewrite
+      {"type": "cypher",     "data": "<cypher>", "results": [...]}    — query + redacted results
+      {"type": "cache_hit",  "data": "<key>"}                         — served from cache
+      {"type": "end",        "data": ""}                              — pipeline complete
+      {"type": "error",      "data": "<message>"}                     — something went wrong
+      {"type": "blocked",    "data": "<reason>"}                      — guardrail rejected
     """
+    settings = get_settings()
+
+    # ── Phase A: input guardrail ──────────────────────────────────────────
+    if settings.guardrails_enabled:
+        gate = check_input(question)
+        if not gate.ok:
+            logger.info(f"Input guardrail blocked: {gate.reason}")
+            yield {"type": "blocked", "data": gate.reason}
+            yield {"type": "end", "data": ""}
+            return
+        question = gate.payload
+
+    # ── Phase B: memory + follow-up rewriting ─────────────────────────────
+    original_question = question
+    session_store = None
+    focus_store = None
+    if conversation_id and settings.memory_enabled:
+        session_store = get_session_store()
+        focus_store = get_focus_store()
+        transcript = session_store.transcript(conversation_id)
+        focus_ids = focus_store.get(conversation_id)
+        rewritten = rewrite_question(question, transcript, focus_ids)
+        if rewritten != question:
+            yield {"type": "rewrite", "data": rewritten}
+            question = rewritten
+
+    # ── Phase C: answer cache lookup (after rewrite, before LLM) ──────────
+    cache = None
+    cache_key = None
+    if use_cache and settings.cache_enabled:
+        cache = get_answer_cache()
+        cache_key = make_cache_key(question, settings.schema_version)
+        cached = cache.get(cache_key)
+        if cached:
+            logger.info(f"Answer cache HIT: {cache_key}")
+            yield {"type": "cache_hit", "data": cache_key}
+            yield {"type": "token", "data": cached.get("answer", "")}
+            yield {
+                "type": "cypher",
+                "data": cached.get("cypher", ""),
+                "results": cached.get("results", []),
+            }
+            yield {"type": "end", "data": ""}
+            # Still update memory on cache hit so follow-ups continue to work.
+            if conversation_id and session_store is not None and focus_store is not None:
+                try:
+                    session_store.append_user(conversation_id, original_question)
+                    if cached.get("answer"):
+                        session_store.append_assistant(conversation_id, cached["answer"])
+                    if cached.get("results"):
+                        new_focus = extract_entity_ids(cached["results"])
+                        if new_focus:
+                            focus_store.set(conversation_id, new_focus)
+                except Exception as e:
+                    logger.warning(f"Memory persist on cache hit failed: {e}")
+            return
+
+    # ── Phase D: route — cypher (exact/aggregate) or hybrid (similarity) ──
+    if settings.hybrid_retriever_enabled and route(question) == Path.HYBRID:
+        logger.info(f"Router → HYBRID for: {question[:80]}")
+        answer_tokens: list[str] = []
+        hybrid_cypher = ""
+        hybrid_results: list[dict] = []
+        try:
+            async for ev in stream_hybrid_response(question):
+                if ev["type"] == "token":
+                    answer_tokens.append(ev["data"])
+                elif ev["type"] == "cypher":
+                    hybrid_cypher = ev.get("data", "")
+                    hybrid_results = ev.get("results", [])
+                yield ev
+                if ev["type"] in ("end", "error"):
+                    break
+        except Exception as e:
+            logger.error(f"Hybrid path crashed: {e}", exc_info=True)
+            yield {"type": "error", "data": str(e)}
+            return
+
+        # Persist memory + cache for the hybrid path the same way the
+        # cypher path does at the bottom of this function.
+        try:
+            answer_text = "".join(answer_tokens).strip()
+            if conversation_id and session_store is not None and focus_store is not None:
+                session_store.append_user(conversation_id, original_question)
+                if answer_text:
+                    session_store.append_assistant(conversation_id, answer_text)
+                new_focus = extract_entity_ids(hybrid_results)
+                if new_focus:
+                    focus_store.set(conversation_id, new_focus)
+            if cache is not None and cache_key and answer_text and hybrid_results:
+                cache.set(cache_key, {
+                    "question": question,
+                    "cypher":   hybrid_cypher,
+                    "results":  hybrid_results,
+                    "answer":   answer_text,
+                })
+                logger.info(f"Answer cache SET (hybrid): {cache_key}")
+        except Exception as e:
+            logger.warning(f"Hybrid post-success persist failed: {e}")
+        return
+
     queue: asyncio.Queue = asyncio.Queue()
     callback = StreamingCallback(queue)
     chain = build_chain(streaming_callback=callback)
 
-    # Written by run_chain(), read by the while loop below
     chain_result: dict = {}
+    answer_tokens: list[str] = []  # buffer for persisting the final answer
 
     async def run_chain():
         try:
@@ -329,24 +370,22 @@ async def stream_qa_response(question: str) -> AsyncGenerator[dict, None]:
             cypher, results = extract_from_steps(chain_result["steps"])
 
             logger.info(f"Extracted cypher: {cypher[:80] if cypher else 'none'}")
-            logger.info(f"Extracted results: {len(results)} rows, sample: {results[:2]}")
+            logger.info(f"Extracted results: {len(results)} rows")
 
-            # Validate — log warning but don't block if Neo4j already ran it
-            validation_error = validate_cypher(cypher)
-            if validation_error:
-                logger.warning(
-                    f"Cypher validation warning: {validation_error}\n"
-                    f"Query was: {cypher}"
-                )
-
-            # Push cypher+results BEFORE end so the consumer has them
             await queue.put({"type": "cypher", "data": cypher, "results": results})
+            await queue.put({"type": "end", "data": ""})
+
+        except GuardrailBlocked as e:
+            logger.info(f"Cypher guardrail rejected the LLM-generated query: {e}")
+            chain_result["finished"] = True
+            await queue.put({
+                "type": "blocked",
+                "data": f"The generated Cypher was rejected by the guardrail: {e}. Try rephrasing.",
+            })
             await queue.put({"type": "end", "data": ""})
 
         except Exception as e:
             logger.error(f"Chain error: {e}", exc_info=True)
-
-            # Give the user a readable message — not a raw Python traceback
             error_msg = str(e)
             if "SyntaxError" in error_msg or "GqlError" in error_msg:
                 error_msg = (
@@ -362,10 +401,15 @@ async def stream_qa_response(question: str) -> AsyncGenerator[dict, None]:
         item = await queue.get()
 
         # StreamingCallback fires "end" when the QA LLM finishes token streaming.
-        # We ignore that one and wait for run_chain's own "end" which also
-        # carries the cypher + results payload.
-        if item["type"] == "end" and not chain_result.get("steps"):
+        # Skip that intermediate "end" — wait for run_chain's terminal "end"
+        # which arrives either with steps populated (success path) or with
+        # chain_result["finished"] set (guardrail-blocked path).
+        terminal = chain_result.get("steps") or chain_result.get("finished")
+        if item["type"] == "end" and not terminal:
             continue
+
+        if item["type"] == "token":
+            answer_tokens.append(item["data"])
 
         yield item
 
@@ -373,3 +417,30 @@ async def stream_qa_response(question: str) -> AsyncGenerator[dict, None]:
             break
 
     await task
+
+    # ── Phase B + C: persist to memory + cache on success ─────────────────
+    if chain_result.get("steps"):
+        try:
+            cypher, results = extract_from_steps(chain_result["steps"])
+            answer_text = "".join(answer_tokens).strip()
+
+            # Memory (Phase B)
+            if conversation_id and session_store is not None and focus_store is not None:
+                session_store.append_user(conversation_id, original_question)
+                if answer_text:
+                    session_store.append_assistant(conversation_id, answer_text)
+                new_focus = extract_entity_ids(results)
+                if new_focus:
+                    focus_store.set(conversation_id, new_focus)
+
+            # Answer cache (Phase C) — only cache full successful turns.
+            if cache is not None and cache_key and answer_text and cypher:
+                cache.set(cache_key, {
+                    "question": question,
+                    "cypher":   cypher,
+                    "results":  results,
+                    "answer":   answer_text,
+                })
+                logger.info(f"Answer cache SET: {cache_key}")
+        except Exception as e:
+            logger.warning(f"Post-success persist failed: {e}")
