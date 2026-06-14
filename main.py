@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Entry point for the Sutherland Global Services — Radiology Partners
+Entry point for the SGS — RP
 Knowledge Graph QA system (HealthGraph AI).
 
 Usage:

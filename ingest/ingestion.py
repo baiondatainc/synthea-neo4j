@@ -1,7 +1,7 @@
 """
 ingestion.py
 ────────────
-Sutherland Global Services — Radiology Partners Knowledge Graph
+SGS — RP Knowledge Graph
 Ingests all parquet files into Neo4j as a connected knowledge graph.
 
 Fixes vs previous version:

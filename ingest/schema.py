@@ -1,7 +1,7 @@
 """
 schema.py
 ─────────
-Sutherland Global Services — Radiology Partners Knowledge Graph
+SGS — RP Knowledge Graph
 Creates all Neo4j constraints and indexes for the RP parquet dataset.
 
 Node labels:

@@ -1,6 +1,6 @@
 """
 FastAPI server for streaming QA over the RP Knowledge Graph.
-Sutherland Global Services — HealthGraph AI for Radiology Partners.
+SGS — HealthGraph AI for RP.
 
 WebSocket protocol (JSON messages):
   Client → Server: {"question": "Which patients have the highest balance?"}
@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("🚀 Starting HealthGraph AI QA Server (Radiology Partners)...")
+    logger.info("🚀 Starting HealthGraph AI QA Server (RP)...")
     Neo4jConnection.get_driver()   # warm up connection pool
     yield
     Neo4jConnection.close()
@@ -43,7 +43,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="HealthGraph AI — RP Knowledge Graph QA",
-    description="Streaming QA over the Radiology Partners knowledge graph",
+    description="Streaming QA over the RP knowledge graph",
     version="1.0.0",
     lifespan=lifespan,
 )

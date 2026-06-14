@@ -1,7 +1,7 @@
 """
 reconcile_import.py
 ───────────────────
-Sutherland Global Services — RP Knowledge Graph
+SGS — RP Knowledge Graph
 Reconciles CSV files against what actually loaded into Neo4j,
 and diagnoses WHY records were skipped during neo4j-admin import.
 

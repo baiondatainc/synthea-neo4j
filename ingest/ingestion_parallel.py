@@ -1,7 +1,7 @@
 """
 ingestion_parallel.py
 ─────────────────────
-Sutherland Global Services — Radiology Partners Knowledge Graph
+SGS — RP Knowledge Graph
 Parallel ingestion using ThreadPoolExecutor.
 
 Strategy:
@@ -79,7 +79,7 @@ def run_ingestion_parallel(data_dir: str = None,
         raise FileNotFoundError(f"Data directory not found: {data_path}")
 
     logger.info("=" * 60)
-    logger.info("  Sutherland Global Services — RP Knowledge Graph")
+    logger.info("  SGS — RP Knowledge Graph")
     logger.info(f"  Data:       {data_path}")
     logger.info(f"  Batch size: {batch_size:,}")
     logger.info(f"  Workers:    {workers}")

@@ -1,7 +1,7 @@
 """
 schema_text.py
 ──────────────
-Sutherland Global Services — Radiology Partners Knowledge Graph
+SGS — RP Knowledge Graph
 Exact schema fed to LangChain GraphCypherQAChain as context.
 Keep this in sync with ingestion.py whenever the graph changes.
 """

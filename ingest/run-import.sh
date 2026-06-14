@@ -1,6 +1,6 @@
 #!/bin/bash
 # ──────────────────────────────────────────────────────────────────
-# Sutherland Global Services — RP Knowledge Graph
+# SGS — RP Knowledge Graph
 # Neo4j Docker Import Script
 # ──────────────────────────────────────────────────────────────────
 # Usage:
@@ -27,7 +27,7 @@ error()   { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
 echo ""
 echo "════════════════════════════════════════════════════════"
-echo "  Sutherland Global Services — RP Knowledge Graph"
+echo "  SGS — RP Knowledge Graph"
 echo "  Neo4j Admin Import"
 echo "════════════════════════════════════════════════════════"
 echo ""
