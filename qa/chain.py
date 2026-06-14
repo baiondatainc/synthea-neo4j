@@ -116,16 +116,16 @@ def get_cypher_llm():
 
     try:
         llm = ChatOllama(
-            model="text2cypher",
+            model=settings.cypher_model,
             base_url=settings.ollama_base_url,
             temperature=0,
             num_predict=512,
         )
-        logger.info("Cypher LLM: using Neo4j text2cypher specialist model")
+        logger.info(f"Cypher LLM: using Ollama model {settings.cypher_model!r}")
         return llm
     except Exception as e:
         logger.warning(
-            f"text2cypher not available ({e}). "
+            f"Cypher model {settings.cypher_model!r} not available ({e}). "
             "Falling back to default LLM for Cypher generation."
         )
         return get_llm(streaming=False)
@@ -159,6 +159,17 @@ STRICT RULES:
   CORRECT:  RETURN p.payor_cohort AS cohort, count(p) AS cnt ORDER BY cnt DESC
 - Always alias dotted properties (RETURN p.state AS state)
 - Use only READ operations — never CREATE, DELETE, MERGE, SET, REMOVE, DROP
+
+DATE / TIME — Cypher uses ACCESSOR SYNTAX, not SQL date functions:
+  WRONG (SQL):    RETURN MONTH(p.dob), YEAR(v.admit_date), EXTRACT(YEAR FROM ...)
+
+  CRITICAL: date/datetime properties in this graph are stored as ISO STRINGS
+  (e.g. "1997-03-09T00:00:00"), not native temporal types. ALWAYS wrap with
+  datetime() before using accessors:
+  WRONG:    p.dob.month                              (fails — p.dob is a string)
+  CORRECT:  datetime(p.dob).month
+  CORRECT:  datetime(v.admit_date).year
+  CORRECT:  datetime(c.service_date).quarter
 
 FEW-SHOT EXAMPLES (RP schema):
 
@@ -225,8 +236,29 @@ LIMIT 10
 Q: Trend of visits by year
 MATCH (v:Visit)
 WHERE v.admit_date IS NOT NULL
-RETURN substring(toString(v.admit_date), 0, 4) AS year, count(v) AS visit_count
+RETURN datetime(v.admit_date).year AS year, count(v) AS visit_count
 ORDER BY year ASC
+
+Q: Patient distribution by birth month
+MATCH (p:Patient)
+WHERE p.dob IS NOT NULL
+RETURN datetime(p.dob).month AS month, count(p) AS patient_count
+ORDER BY month ASC
+
+Q: Charges by year and modality
+MATCH (c:Charge)
+WHERE c.service_date IS NOT NULL
+RETURN datetime(c.service_date).year AS year,
+       c.procedure_modality AS modality,
+       count(c) AS charges
+ORDER BY year, charges DESC
+
+Q: How many patients were born in the 1980s?
+MATCH (p:Patient)
+WHERE p.dob IS NOT NULL
+  AND datetime(p.dob).year >= 1980
+  AND datetime(p.dob).year < 1990
+RETURN count(p) AS patient_count
 
 The question is:
 {question}""",

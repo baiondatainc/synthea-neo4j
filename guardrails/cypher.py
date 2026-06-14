@@ -32,6 +32,14 @@ SQL_SELECT = re.compile(r"(?:^|\n)\s*SELECT\s+", re.IGNORECASE)
 SQL_JOIN = re.compile(r"\b(INNER|LEFT|RIGHT|FULL|CROSS)\s+JOIN\b", re.IGNORECASE)
 SQL_GROUP_BY = re.compile(r"\bGROUP\s+BY\b", re.IGNORECASE)
 
+# SQL-style date/time functions. Cypher uses accessor syntax instead:
+#   p.dob.year, p.dob.month, p.dob.day, p.dob.quarter
+SQL_DATE_FUNCS = re.compile(
+    r"\b(YEAR|MONTH|DAY|HOUR|MINUTE|SECOND|QUARTER|WEEK|"
+    r"DATEPART|DATEDIFF|DATEADD|DATE_TRUNC|EXTRACT|TO_CHAR|TO_DATE)\s*\(",
+    re.IGNORECASE,
+)
+
 
 def _check_not_sql(cypher: str) -> str | None:
     if SQL_FROM.search(cypher) or SQL_SELECT.search(cypher):
@@ -40,6 +48,13 @@ def _check_not_sql(cypher: str) -> str | None:
         return "Cypher generator produced SQL JOIN. Cypher uses pattern matching, not JOIN."
     if SQL_GROUP_BY.search(cypher):
         return "Cypher generator used GROUP BY. Cypher groups implicitly via aggregation in RETURN."
+    m = SQL_DATE_FUNCS.search(cypher)
+    if m:
+        fn = m.group(1).upper()
+        return (
+            f"Cypher generator used SQL date function {fn}(...). "
+            f"Cypher uses accessor syntax instead (e.g. p.dob.{fn.lower()} or date(p.dob).{fn.lower()})."
+        )
     return None
 
 # A :Foo token inside (node:Foo) is a label; inside [edge:FOO] is a rel type.

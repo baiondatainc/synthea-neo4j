@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     openai_api_key: str = Field("", env="OPENAI_API_KEY")
     ollama_base_url: str = Field("http://localhost:11434", env="OLLAMA_BASE_URL")
     ollama_model: str = Field("llama3.2", env="OLLAMA_MODEL")
+    # Cypher specialist (separate from the QA LLM above). Use any Ollama tag,
+    # e.g. "text2cypher", "text2cypher:latest", "qwen2.5-coder:14b".
+    cypher_model: str = Field("text2cypher", env="CYPHER_MODEL")
 
     # App
     app_host: str = Field("0.0.0.0", env="APP_HOST")
