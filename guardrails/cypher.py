@@ -25,6 +25,23 @@ APOC_WRITE = re.compile(
 )
 LIMIT_RE = re.compile(r"\bLIMIT\s+\d+\b", re.IGNORECASE)
 
+# SQL-shaped output from a confused LLM. Cypher never uses these as openers
+# or in the canonical positions SQL puts them in.
+SQL_FROM = re.compile(r"(?:^|\n)\s*FROM\s+[A-Za-z]", re.IGNORECASE)
+SQL_SELECT = re.compile(r"(?:^|\n)\s*SELECT\s+", re.IGNORECASE)
+SQL_JOIN = re.compile(r"\b(INNER|LEFT|RIGHT|FULL|CROSS)\s+JOIN\b", re.IGNORECASE)
+SQL_GROUP_BY = re.compile(r"\bGROUP\s+BY\b", re.IGNORECASE)
+
+
+def _check_not_sql(cypher: str) -> str | None:
+    if SQL_FROM.search(cypher) or SQL_SELECT.search(cypher):
+        return "Cypher generator produced SQL syntax (FROM/SELECT). Try rephrasing the question."
+    if SQL_JOIN.search(cypher):
+        return "Cypher generator produced SQL JOIN. Cypher uses pattern matching, not JOIN."
+    if SQL_GROUP_BY.search(cypher):
+        return "Cypher generator used GROUP BY. Cypher groups implicitly via aggregation in RETURN."
+    return None
+
 # A :Foo token inside (node:Foo) is a label; inside [edge:FOO] is a rel type.
 # We use bracket context to disambiguate so an unknown rel doesn't get flagged
 # as an unknown label and vice versa.
@@ -68,6 +85,10 @@ def check_cypher(cypher: str) -> GuardrailResult[str]:
     settings = get_settings()
     if not cypher or not cypher.strip():
         return GuardrailResult(ok=False, payload="", reason="Empty Cypher.")
+
+    err = _check_not_sql(cypher)
+    if err:
+        return GuardrailResult(ok=False, payload=cypher, reason=err)
 
     err = _check_readonly(cypher)
     if err:

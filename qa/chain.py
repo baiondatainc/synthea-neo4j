@@ -135,27 +135,98 @@ def get_cypher_llm():
 
 CYPHER_GENERATION_PROMPT = PromptTemplate(
     input_variables=["schema", "question"],
-    template="""Generate Cypher statement to query a graph database.
-Use only the provided relationship types and properties in the schema.
-Do not use any other relationship types or properties that are not provided.
+    template="""You generate Neo4j CYPHER statements. This is NOT SQL.
+
+CYPHER syntax (NOT SQL):
+- Begin every query with MATCH, not FROM or SELECT
+- WRONG (SQL):    SELECT count(p) FROM Patient AS p
+- CORRECT (Cypher): MATCH (p:Patient) RETURN count(p) AS patient_count
+
+Use only the labels, relationship types, and properties listed in the schema.
+Do not invent labels or properties not in the schema.
 
 Schema:
 {schema}
 
-Note: Do not include any explanations or apologies in your responses.
-Do not include any text except the generated Cypher statement.
+STRICT RULES:
+- Output ONLY raw Cypher — no markdown, no backticks, no SQL, no explanation
+- Every query must start with MATCH (or OPTIONAL MATCH / CALL / WITH / UNWIND)
+- Never use SQL keywords: FROM, SELECT, JOIN, GROUP BY, AS in FROM-clause
+- GROUP BY does not exist in Cypher — grouping is implicit when you mix
+  grouping keys with aggregation in RETURN
+- Never use aggregation directly in ORDER BY
+  WRONG:    ORDER BY COUNT(p) DESC
+  CORRECT:  RETURN p.payor_cohort AS cohort, count(p) AS cnt ORDER BY cnt DESC
+- Always alias dotted properties (RETURN p.state AS state)
+- Use only READ operations — never CREATE, DELETE, MERGE, SET, REMOVE, DROP
 
-STRICT CYPHER RULES:
-- GROUP BY does not exist in Cypher — never use it
-- Never use aggregation (COUNT, SUM, AVG) directly in ORDER BY
-- Always alias aggregations before using in ORDER BY
-  WRONG:  ORDER BY COUNT(p) DESC
-  CORRECT: RETURN p.gender AS gender, count(p) AS cnt ORDER BY cnt DESC
-- Always alias dotted properties
-  WRONG:  RETURN p.gender
-  CORRECT: RETURN p.gender AS gender
-- Output ONLY raw Cypher — no markdown, no backticks, no explanation
-- Use only READ operations — never CREATE, DELETE, MERGE, SET, or REMOVE
+FEW-SHOT EXAMPLES (RP schema):
+
+Q: How many patients are there?
+MATCH (p:Patient)
+RETURN count(p) AS patient_count
+
+Q: How many patients per practice?
+MATCH (p:Patient)-[:REGISTERED_AT]->(pr:Practice)
+RETURN pr.code AS practice, count(p) AS patient_count
+ORDER BY patient_count DESC
+
+Q: Which patients have the highest outstanding balance?
+MATCH (p:Patient)
+WHERE p.outstanding_balance IS NOT NULL
+RETURN p.patientId AS patient_id, p.outstanding_balance AS balance,
+       p.payor_cohort AS cohort
+ORDER BY balance DESC
+LIMIT 10
+
+Q: What is the total bad debt by state?
+MATCH (p:Patient)
+WHERE p.state IS NOT NULL
+RETURN p.state AS state, sum(p.adj_bad_debt) AS total_bad_debt
+ORDER BY total_bad_debt DESC
+
+Q: How many self-pay patients per practice?
+MATCH (p:Patient)-[:REGISTERED_AT]->(pr:Practice)
+WHERE p.is_self_pay = true
+RETURN pr.code AS practice, count(p) AS self_pay_count
+ORDER BY self_pay_count DESC
+
+Q: What are the most common procedure modalities?
+MATCH (c:Charge)
+WHERE c.procedure_modality IS NOT NULL AND c.procedure_modality <> ""
+RETURN c.procedure_modality AS modality, count(c) AS charge_count
+ORDER BY charge_count DESC
+LIMIT 10
+
+Q: Which insurance carriers cover the most visits?
+MATCH (v:Visit)-[:UNDER_PLAN]->(i:InsurancePlan)
+WHERE i.carrier_name IS NOT NULL
+RETURN i.carrier_name AS carrier, count(v) AS visits
+ORDER BY visits DESC
+LIMIT 10
+
+Q: Show me the gender distribution of patients
+MATCH (p:Patient)
+WHERE p.gender IS NOT NULL
+RETURN p.gender AS gender, count(p) AS count
+ORDER BY count DESC
+
+Q: How much was collected via IVR pay-by-phone?
+MATCH (p:Patient)-[:CALLED_IVR]->(i:IVRInbound)
+WHERE i.amount_paid IS NOT NULL
+RETURN sum(i.amount_paid) AS total_ivr_paid
+
+Q: Which locations have the lowest Birdeye ratings?
+MATCH (b:BirdeyeReview)-[:REVIEWS]->(l:Location)
+RETURN l.name AS location, avg(b.rating) AS avg_rating, count(b) AS review_count
+ORDER BY avg_rating ASC
+LIMIT 10
+
+Q: Trend of visits by year
+MATCH (v:Visit)
+WHERE v.admit_date IS NOT NULL
+RETURN substring(toString(v.admit_date), 0, 4) AS year, count(v) AS visit_count
+ORDER BY year ASC
 
 The question is:
 {question}""",
