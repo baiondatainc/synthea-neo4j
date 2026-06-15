@@ -12,6 +12,8 @@ Usage:
   python main.py vectorize          # embed Patients (Phase D hybrid retriever)
   python main.py vectorize --force  # re-embed every Patient (overwrite existing)
   python main.py vectorize --limit 5000   # embed only the first N
+  python main.py warm data/faqs/    # pre-populate answer cache from FAQ files
+  python main.py warm data/faqs/patient.txt data/faqs/birdeye_review.txt
   python main.py ask "question"     # one-off question (no streaming)
 """
 import sys
@@ -123,6 +125,78 @@ def cmd_vectorize(force: bool = False, limit: int = 1_000_000):
     print(f"\n✓ Vectorize complete: {summary}\n")
 
 
+async def cmd_warm(paths: list[str]):
+    """Pre-populate the answer cache from one or more FAQ files.
+
+    Each file holds one question per line. Lines starting with '#' or blank
+    are skipped. Globs (path/*.txt) and directories are expanded.
+
+    Re-runnable: questions already in the cache report as 'cached' and don't
+    re-hit the LLM. Errored questions don't block the rest of the run.
+    """
+    from glob import glob
+    from pathlib import Path
+    from qa.chain import stream_qa_response
+
+    files: list[Path] = []
+    for p in paths:
+        path = Path(p)
+        if path.is_dir():
+            files.extend(sorted(path.glob("*.txt")))
+        elif any(ch in p for ch in "*?["):
+            files.extend(Path(f) for f in sorted(glob(p)))
+        elif path.exists():
+            files.append(path)
+        else:
+            print(f"⚠ skip (missing): {p}")
+
+    if not files:
+        print("No question files found.")
+        return
+
+    questions: list[tuple[str, str]] = []
+    for f in files:
+        with open(f) as fh:
+            for line in fh:
+                q = line.strip()
+                if q and not q.startswith("#"):
+                    questions.append((f.name, q))
+
+    print(f"\n🔥 Warming {len(questions)} question(s) from {len(files)} file(s)\n")
+    warmed = cached = blocked = err = 0
+
+    for i, (src, q) in enumerate(questions, 1):
+        print(f"[{i:>3}/{len(questions)}] {src}: {q[:90]}")
+        outcome = {"hit": False, "blocked": None, "error": None}
+        try:
+            async for chunk in stream_qa_response(q, use_cache=True):
+                t = chunk["type"]
+                if t == "cache_hit":
+                    outcome["hit"] = True
+                elif t == "blocked":
+                    outcome["blocked"] = chunk["data"]
+                elif t == "error":
+                    outcome["error"] = chunk["data"]
+        except Exception as e:
+            outcome["error"] = str(e)
+
+        if outcome["error"]:
+            err += 1
+            print(f"      ✗ error: {outcome['error'][:140]}")
+        elif outcome["blocked"]:
+            blocked += 1
+            print(f"      ⊘ blocked: {outcome['blocked'][:140]}")
+        elif outcome["hit"]:
+            cached += 1
+            print("      ✓ already cached")
+        else:
+            warmed += 1
+            print("      ✓ warmed")
+
+    print()
+    print(f"Summary: warmed={warmed}  already_cached={cached}  blocked={blocked}  errors={err}")
+
+
 async def cmd_ask(question: str):
     from qa.chain import stream_qa_response
     print(f"\n❓ {question}\n")
@@ -161,6 +235,8 @@ def main():
                 except ValueError:
                     pass
         cmd_vectorize(force=force, limit=limit)
+    elif args[0] == "warm" and len(args) > 1:
+        asyncio.run(cmd_warm(args[1:]))
     elif args[0] == "ask" and len(args) > 1:
         question = " ".join(args[1:])
         asyncio.run(cmd_ask(question))
