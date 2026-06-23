@@ -24,7 +24,7 @@ install-dev: install
 	$(PIP) install --upgrade black flake8 pytest || true
 
 run: venv
-	$(PY) main.py
+	$(PY) main.py serve
 
 lint: venv
 	$(PIP) install --upgrade flake8 >/dev/null 2>&1 || true

@@ -17,6 +17,7 @@ COPY metadata ./metadata
 COPY guardrails ./guardrails
 COPY memory ./memory
 COPY cache ./cache
+COPY semantic ./semantic
 
 RUN uv pip install --system --no-cache .
 

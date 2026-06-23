@@ -4,8 +4,19 @@ LangChain RAG pipeline with streaming and result extraction for charting.
 Architecture:
   input guardrail → cypher_llm (text2cypher) → cypher guardrail (read-only,
   schema, row cap) → Neo4j → output redaction → qa_llm → streamed answer
+
+Caching:
+  - The Neo4j graph (connection + introspected schema) is built once per
+    process and reused across requests. Call `invalidate_chain_cache()`
+    after a schema change or ingestion to rebuild.
+  - The Cypher LLM ChatOllama client is similarly cached.
+
+Timing:
+  - Per-request timing logs every major phase. Set LOG_LEVEL=INFO to see.
 """
 import re
+import os
+import time
 import logging
 import asyncio
 from typing import AsyncGenerator, Any
@@ -32,6 +43,22 @@ from qa.router import route, Path
 from qa.hybrid_retriever import stream_hybrid_response
 
 logger = logging.getLogger(__name__)
+
+
+# ── Module-level caches ───────────────────────────────────────────────────────
+# Built once on first use, reused across requests. Invalidate via
+# invalidate_chain_cache() when the schema or model config changes.
+
+_GRAPH_CACHE: "Neo4jGraph | None" = None
+_CYPHER_LLM_CACHE = None
+
+
+def invalidate_chain_cache() -> None:
+    """Clear the graph and LLM caches. Call after schema/ingestion changes."""
+    global _GRAPH_CACHE, _CYPHER_LLM_CACHE
+    _GRAPH_CACHE = None
+    _CYPHER_LLM_CACHE = None
+    logger.info("Chain cache invalidated — graph + LLM will rebuild on next request")
 
 
 # ── Streaming callback ────────────────────────────────────────────────────────
@@ -86,182 +113,109 @@ class GuardedNeo4jGraph(Neo4jGraph):
         return rows
 
 
-# ── Neo4j Graph factory ───────────────────────────────────────────────────────
+# ── Neo4j Graph factory (cached) ──────────────────────────────────────────────
 
 def get_neo4j_graph() -> Neo4jGraph:
+    """Returns a Neo4jGraph singleton — connection + introspected schema cached
+    for the life of the process.
+    """
+    global _GRAPH_CACHE
+    if _GRAPH_CACHE is not None:
+        return _GRAPH_CACHE
+
+    t0 = time.monotonic()
     settings = get_settings()
     catalog = get_catalog()
-    graph = GuardedNeo4jGraph(
+
+    graph_obj = GuardedNeo4jGraph(
         url=settings.neo4j_uri,
         username=settings.neo4j_username,
         password=settings.neo4j_password,
         enhanced_schema=False,
     )
-    graph.refresh_schema()
+    t_connect = time.monotonic()
+
+    graph_obj.refresh_schema()
+    t_refresh = time.monotonic()
+
     # Augment the schema text with friendly descriptions from the data
     # dictionary so the Cypher-generation prompt has human context.
-    graph.schema = f"{GRAPH_SCHEMA}\n\n{catalog.schema_addendum()}"
-    return graph
+    graph_obj.schema = f"{GRAPH_SCHEMA}\n\n{catalog.schema_addendum()}"
+    t_build = time.monotonic()
+
+    schema_chars = len(graph_obj.schema)
+    schema_tokens = schema_chars // 4
+    logger.info(
+        f"Neo4j graph initialised — "
+        f"connect={int((t_connect - t0) * 1000)}ms, "
+        f"refresh_schema={int((t_refresh - t_connect) * 1000)}ms, "
+        f"build_text={int((t_build - t_refresh) * 1000)}ms, "
+        f"schema={schema_chars} chars (~{schema_tokens} tokens)"
+    )
+
+    # Optional: dump schema to disk for inspection (only when env var set)
+    if os.getenv("DUMP_SCHEMA", "").lower() in ("1", "true", "yes"):
+        try:
+            with open("/tmp/schema_dump.txt", "w") as f:
+                f.write(graph_obj.schema)
+            logger.info("Schema dumped to /tmp/schema_dump.txt")
+        except Exception as e:
+            logger.warning(f"Could not dump schema: {e}")
+
+    _GRAPH_CACHE = graph_obj
+    return graph_obj
 
 
-# ── Cypher specialist LLM ─────────────────────────────────────────────────────
+# ── Cypher specialist LLM (cached) ────────────────────────────────────────────
 
 def get_cypher_llm():
-    """Returns the Neo4j text2cypher fine-tuned model running locally via Ollama.
+    """Returns the Cypher-tuned model running locally via Ollama.
 
-    Falls back to the default configured LLM if text2cypher is not yet
-    available so the app keeps working while you set up the specialist model.
+    Cached at module level so we don't re-instantiate the HTTP client on
+    every request. Falls back to the default configured LLM if the
+    specialist model is not available.
     """
-    settings = get_settings()
+    global _CYPHER_LLM_CACHE
+    if _CYPHER_LLM_CACHE is not None:
+        return _CYPHER_LLM_CACHE
 
+    settings = get_settings()
     try:
         llm = ChatOllama(
             model=settings.cypher_model,
             base_url=settings.ollama_base_url,
             temperature=0,
-            num_predict=512,
+            num_predict=256,
+            num_ctx=4096,
+            keep_alive="24h",
         )
-        logger.info(f"Cypher LLM: using Ollama model {settings.cypher_model!r}")
+        logger.info(
+            f"Cypher LLM initialised — model={settings.cypher_model!r}, "
+            f"num_ctx=4096, num_predict=256, keep_alive=24h"
+        )
+        _CYPHER_LLM_CACHE = llm
         return llm
     except Exception as e:
         logger.warning(
             f"Cypher model {settings.cypher_model!r} not available ({e}). "
             "Falling back to default LLM for Cypher generation."
         )
+        # Don't cache the fallback — let it retry the real model on next request.
         return get_llm(streaming=False)
 
 
 # ── Prompts ───────────────────────────────────────────────────────────────────
+# Slim Cypher prompt — the Modelfile SYSTEM carries the rules, examples,
+# and datetime guidance. This template just supplies the dynamic bits.
 
 CYPHER_GENERATION_PROMPT = PromptTemplate(
     input_variables=["schema", "question"],
-    template="""You generate Neo4j CYPHER statements. This is NOT SQL.
-
-CYPHER syntax (NOT SQL):
-- Begin every query with MATCH, not FROM or SELECT
-- WRONG (SQL):    SELECT count(p) FROM Patient AS p
-- CORRECT (Cypher): MATCH (p:Patient) RETURN count(p) AS patient_count
-
-Use only the labels, relationship types, and properties listed in the schema.
-Do not invent labels or properties not in the schema.
-
-Schema:
+    template="""Schema:
 {schema}
 
-STRICT RULES:
-- Output ONLY raw Cypher — no markdown, no backticks, no SQL, no explanation
-- Every query must start with MATCH (or OPTIONAL MATCH / CALL / WITH / UNWIND)
-- Never use SQL keywords: FROM, SELECT, JOIN, GROUP BY, AS in FROM-clause
-- GROUP BY does not exist in Cypher — grouping is implicit when you mix
-  grouping keys with aggregation in RETURN
-- Never use aggregation directly in ORDER BY
-  WRONG:    ORDER BY COUNT(p) DESC
-  CORRECT:  RETURN p.payor_cohort AS cohort, count(p) AS cnt ORDER BY cnt DESC
-- Always alias dotted properties (RETURN p.state AS state)
-- Use only READ operations — never CREATE, DELETE, MERGE, SET, REMOVE, DROP
+Question: {question}
 
-DATE / TIME — Cypher uses ACCESSOR SYNTAX, not SQL date functions:
-  WRONG (SQL):    RETURN MONTH(p.dob), YEAR(v.admit_date), EXTRACT(YEAR FROM ...)
-
-  CRITICAL: date/datetime properties in this graph are stored as ISO STRINGS
-  (e.g. "1997-03-09T00:00:00"), not native temporal types. ALWAYS wrap with
-  datetime() before using accessors:
-  WRONG:    p.dob.month                              (fails — p.dob is a string)
-  CORRECT:  datetime(p.dob).month
-  CORRECT:  datetime(v.admit_date).year
-  CORRECT:  datetime(c.service_date).quarter
-
-FEW-SHOT EXAMPLES (RP schema):
-
-Q: How many patients are there?
-MATCH (p:Patient)
-RETURN count(p) AS patient_count
-
-Q: How many patients per practice?
-MATCH (p:Patient)-[:REGISTERED_AT]->(pr:Practice)
-RETURN pr.code AS practice, count(p) AS patient_count
-ORDER BY patient_count DESC
-
-Q: Which patients have the highest outstanding balance?
-MATCH (p:Patient)
-WHERE p.outstanding_balance IS NOT NULL
-RETURN p.patientId AS patient_id, p.outstanding_balance AS balance,
-       p.payor_cohort AS cohort
-ORDER BY balance DESC
-LIMIT 10
-
-Q: What is the total bad debt by state?
-MATCH (p:Patient)
-WHERE p.state IS NOT NULL
-RETURN p.state AS state, sum(p.adj_bad_debt) AS total_bad_debt
-ORDER BY total_bad_debt DESC
-
-Q: How many self-pay patients per practice?
-MATCH (p:Patient)-[:REGISTERED_AT]->(pr:Practice)
-WHERE p.is_self_pay = true
-RETURN pr.code AS practice, count(p) AS self_pay_count
-ORDER BY self_pay_count DESC
-
-Q: What are the most common procedure modalities?
-MATCH (c:Charge)
-WHERE c.procedure_modality IS NOT NULL AND c.procedure_modality <> ""
-RETURN c.procedure_modality AS modality, count(c) AS charge_count
-ORDER BY charge_count DESC
-LIMIT 10
-
-Q: Which insurance carriers cover the most visits?
-MATCH (v:Visit)-[:UNDER_PLAN]->(i:InsurancePlan)
-WHERE i.carrier_name IS NOT NULL
-RETURN i.carrier_name AS carrier, count(v) AS visits
-ORDER BY visits DESC
-LIMIT 10
-
-Q: Show me the gender distribution of patients
-MATCH (p:Patient)
-WHERE p.gender IS NOT NULL
-RETURN p.gender AS gender, count(p) AS count
-ORDER BY count DESC
-
-Q: How much was collected via IVR pay-by-phone?
-MATCH (p:Patient)-[:CALLED_IVR]->(i:IVRInbound)
-WHERE i.amount_paid IS NOT NULL
-RETURN sum(i.amount_paid) AS total_ivr_paid
-
-Q: Which locations have the lowest Birdeye ratings?
-MATCH (b:BirdeyeReview)-[:REVIEWS]->(l:Location)
-RETURN l.name AS location, avg(b.rating) AS avg_rating, count(b) AS review_count
-ORDER BY avg_rating ASC
-LIMIT 10
-
-Q: Trend of visits by year
-MATCH (v:Visit)
-WHERE v.admit_date IS NOT NULL
-RETURN datetime(v.admit_date).year AS year, count(v) AS visit_count
-ORDER BY year ASC
-
-Q: Patient distribution by birth month
-MATCH (p:Patient)
-WHERE p.dob IS NOT NULL
-RETURN datetime(p.dob).month AS month, count(p) AS patient_count
-ORDER BY month ASC
-
-Q: Charges by year and modality
-MATCH (c:Charge)
-WHERE c.service_date IS NOT NULL
-RETURN datetime(c.service_date).year AS year,
-       c.procedure_modality AS modality,
-       count(c) AS charges
-ORDER BY year, charges DESC
-
-Q: How many patients were born in the 1980s?
-MATCH (p:Patient)
-WHERE p.dob IS NOT NULL
-  AND datetime(p.dob).year >= 1980
-  AND datetime(p.dob).year < 1990
-RETURN count(p) AS patient_count
-
-The question is:
-{question}""",
+Cypher:""",
 )
 
 QA_GENERATION_PROMPT = PromptTemplate(
@@ -283,17 +237,24 @@ Answer:""",
 # ── Build chain ───────────────────────────────────────────────────────────────
 
 def build_chain(streaming_callback: StreamingCallback = None) -> GraphCypherQAChain:
-    graph = get_neo4j_graph()
+    """Build a GraphCypherQAChain. Uses cached graph + Cypher LLM, so this is
+    cheap (the chain wiring itself is the only per-request cost)."""
+    t0 = time.monotonic()
+
+    graph_obj = get_neo4j_graph()
+    t_graph = time.monotonic()
 
     cypher_llm = get_cypher_llm()
+    t_cypher_llm = time.monotonic()
 
     qa_llm = get_llm(streaming=bool(streaming_callback))
     if streaming_callback:
         qa_llm.callbacks = [streaming_callback]
+    t_qa_llm = time.monotonic()
 
     chain = GraphCypherQAChain.from_llm(
         llm=qa_llm,
-        graph=graph,
+        graph=graph_obj,
         cypher_llm=cypher_llm,
         cypher_prompt=CYPHER_GENERATION_PROMPT,
         qa_prompt=QA_GENERATION_PROMPT,
@@ -301,6 +262,16 @@ def build_chain(streaming_callback: StreamingCallback = None) -> GraphCypherQACh
         return_intermediate_steps=True,
         allow_dangerous_requests=True,
         input_key="query",
+    )
+    t_done = time.monotonic()
+
+    logger.debug(
+        f"Chain built — "
+        f"graph={int((t_graph - t0) * 1000)}ms, "
+        f"cypher_llm={int((t_cypher_llm - t_graph) * 1000)}ms, "
+        f"qa_llm={int((t_qa_llm - t_cypher_llm) * 1000)}ms, "
+        f"wire={int((t_done - t_qa_llm) * 1000)}ms, "
+        f"total={int((t_done - t0) * 1000)}ms"
     )
     return chain
 
@@ -359,6 +330,8 @@ async def stream_qa_response(
       {"type": "blocked",    "data": "<reason>"}                      — guardrail rejected
     """
     settings = get_settings()
+    t_start = time.monotonic()
+    timings: dict[str, float] = {}
 
     # ── Phase A: input guardrail ──────────────────────────────────────────
     if settings.guardrails_enabled:
@@ -369,8 +342,10 @@ async def stream_qa_response(
             yield {"type": "end", "data": ""}
             return
         question = gate.payload
+    timings["guardrail"] = time.monotonic() - t_start
 
     # ── Phase B: memory + follow-up rewriting ─────────────────────────────
+    t_mem = time.monotonic()
     original_question = question
     session_store = None
     focus_store = None
@@ -383,8 +358,10 @@ async def stream_qa_response(
         if rewritten != question:
             yield {"type": "rewrite", "data": rewritten}
             question = rewritten
+    timings["memory"] = time.monotonic() - t_mem
 
     # ── Phase C: answer cache lookup (after rewrite, before LLM) ──────────
+    t_cache = time.monotonic()
     cache = None
     cache_key = None
     if use_cache and settings.cache_enabled:
@@ -392,7 +369,12 @@ async def stream_qa_response(
         cache_key = make_cache_key(question, settings.schema_version)
         cached = cache.get(cache_key)
         if cached:
-            logger.info(f"Answer cache HIT: {cache_key}")
+            timings["cache_lookup"] = time.monotonic() - t_cache
+            timings["total"] = time.monotonic() - t_start
+            logger.info(
+                f"Answer cache HIT — key={cache_key}, "
+                f"total={int(timings['total'] * 1000)}ms"
+            )
             yield {"type": "cache_hit", "data": cache_key}
             yield {"type": "token", "data": cached.get("answer", "")}
             yield {
@@ -414,6 +396,7 @@ async def stream_qa_response(
                 except Exception as e:
                     logger.warning(f"Memory persist on cache hit failed: {e}")
             return
+    timings["cache_lookup"] = time.monotonic() - t_cache
 
     # ── Phase D: route — cypher (exact/aggregate) or hybrid (similarity) ──
     if settings.hybrid_retriever_enabled and route(question) == Path.HYBRID:
@@ -421,6 +404,7 @@ async def stream_qa_response(
         answer_tokens: list[str] = []
         hybrid_cypher = ""
         hybrid_results: list[dict] = []
+        t_hybrid = time.monotonic()
         try:
             async for ev in stream_hybrid_response(question):
                 if ev["type"] == "token":
@@ -435,6 +419,17 @@ async def stream_qa_response(
             logger.error(f"Hybrid path crashed: {e}", exc_info=True)
             yield {"type": "error", "data": str(e)}
             return
+
+        timings["hybrid"] = time.monotonic() - t_hybrid
+        timings["total"] = time.monotonic() - t_start
+        logger.info(
+            f"Pipeline complete (hybrid) — "
+            f"guardrail={int(timings['guardrail'] * 1000)}ms, "
+            f"memory={int(timings['memory'] * 1000)}ms, "
+            f"cache={int(timings['cache_lookup'] * 1000)}ms, "
+            f"hybrid={int(timings['hybrid'] * 1000)}ms, "
+            f"total={int(timings['total'] * 1000)}ms"
+        )
 
         # Persist memory + cache for the hybrid path the same way the
         # cypher path does at the bottom of this function.
@@ -459,21 +454,37 @@ async def stream_qa_response(
             logger.warning(f"Hybrid post-success persist failed: {e}")
         return
 
+    # ── Phase E: Cypher path ──────────────────────────────────────────────
+    t_build = time.monotonic()
     queue: asyncio.Queue = asyncio.Queue()
     callback = StreamingCallback(queue)
     chain = build_chain(streaming_callback=callback)
+    timings["build_chain"] = time.monotonic() - t_build
 
     chain_result: dict = {}
     answer_tokens: list[str] = []  # buffer for persisting the final answer
+    t_chain_start = time.monotonic()
 
     async def run_chain():
         try:
             result = await chain.ainvoke({"query": question})
             chain_result["steps"] = result.get("intermediate_steps", [])
+            # Capture the final answer from the chain result. The streaming
+            # callback runs from an executor thread (Chain._acall → _call) and
+            # cannot reliably deliver tokens to this loop's queue, so its
+            # buffered tokens are best-effort only — the chain result is the
+            # source of truth used for caching.
+            chain_result["answer"] = result.get("result", "") or ""
             cypher, results = extract_from_steps(chain_result["steps"])
 
             logger.info(f"Extracted cypher: {cypher[:80] if cypher else 'none'}")
             logger.info(f"Extracted results: {len(results)} rows")
+
+            # If streaming didn't deliver any tokens (callback ran in an
+            # executor thread that can't reach this loop's queue), emit the
+            # full answer as a single token so the client still receives it.
+            if chain_result["answer"] and not answer_tokens:
+                await queue.put({"type": "token", "data": chain_result["answer"]})
 
             await queue.put({"type": "cypher", "data": cypher, "results": results})
             await queue.put({"type": "end", "data": ""})
@@ -520,12 +531,20 @@ async def stream_qa_response(
             break
 
     await task
+    timings["chain_execute"] = time.monotonic() - t_chain_start
 
-    # ── Phase B + C: persist to memory + cache on success ─────────────────
+    # ── Phase F: persist to memory + cache on success ─────────────────────
+    t_persist = time.monotonic()
     if chain_result.get("steps"):
         try:
             cypher, results = extract_from_steps(chain_result["steps"])
-            answer_text = "".join(answer_tokens).strip()
+            # Prefer the chain's final result over streamed tokens. The
+            # streaming callback runs in an executor thread and may not
+            # deliver tokens to this loop, leaving answer_tokens empty even
+            # on a successful run.
+            answer_text = (chain_result.get("answer") or "").strip()
+            if not answer_text:
+                answer_text = "".join(answer_tokens).strip()
 
             # Memory (Phase B)
             if conversation_id and session_store is not None and focus_store is not None:
@@ -545,5 +564,26 @@ async def stream_qa_response(
                     "answer":   answer_text,
                 })
                 logger.info(f"Answer cache SET: {cache_key}")
+            else:
+                logger.warning(
+                    f"Cache SET SKIPPED — "
+                    f"cache_ok={cache is not None}, "
+                    f"key_ok={bool(cache_key)}, "
+                    f"answer_ok={bool(answer_text)}, "
+                    f"cypher_ok={bool(cypher)}"
+                )
         except Exception as e:
-            logger.warning(f"Post-success persist failed: {e}")
+            logger.warning(f"Post-success persist failed: {e}", exc_info=True)
+    timings["persist"] = time.monotonic() - t_persist
+    timings["total"] = time.monotonic() - t_start
+
+    logger.info(
+        f"Pipeline complete (cypher) — "
+        f"guardrail={int(timings['guardrail'] * 1000)}ms, "
+        f"memory={int(timings['memory'] * 1000)}ms, "
+        f"cache_lookup={int(timings['cache_lookup'] * 1000)}ms, "
+        f"build_chain={int(timings['build_chain'] * 1000)}ms, "
+        f"chain_execute={int(timings['chain_execute'] * 1000)}ms, "
+        f"persist={int(timings['persist'] * 1000)}ms, "
+        f"total={int(timings['total'] * 1000)}ms"
+    )
