@@ -4,151 +4,777 @@
 # text2cypher prompt and used to swap codes for human-readable labels in
 # answer text and chart artifacts.
 #
+# UPDATED: fixed call_tier values, added payor_cohort missing codes,
+# added Practice.source_db translations, added Transaction.paysource values,
+# added property descriptions for all nodes, added relationship direction +
+# example Cypher paths for all relationships.
+#
 # Keep this file authoritative — `catalog.py` loads it once at startup.
 
 labels:
+
+  # ── Patient ──────────────────────────────────────────────────────────────
   Patient:
-    description: "An RP patient with demographics, cohort flags, and rollup financials."
-    pii: ["first_name", "middle_name", "last_name", "phone_norm", "cell_norm", "email", "dob", "zip"]
+    description: >
+      An RP patient with demographics, cohort flags, and rollup financials.
+      patientId is the composite key: source_db + ':' + patient_id (e.g. RADM:1000000).
+    pii:
+      - first_name
+      - middle_name
+      - last_name
+      - phone_norm
+      - cell_norm
+      - email
+      - dob
+      - zip
     properties:
-      payor_cohort:
-        description: "Coarse payor classification."
+      patientId:
+        description: "Composite patient key — source_db:patient_id (e.g. RADM:1000000). Primary lookup key."
+      source_db:
+        description: "Facility / practice code the patient was registered in."
         values:
-          bai: "BCBS Affiliated, Inc."
-          sapa: "Self-pay"
-          nraa: "Non-resident / out-of-area"
-          tennessee: "Tennessee-specific cohort"
-          atlanta_404: "Atlanta 404 cohort"
-      call_tier:
-        description: "Outreach intensity tier."
-        values:
-          high: "High-touch (>= 6 calls in window)"
-          mid: "Mid-touch (3-5 calls)"
-          low: "Low-touch (<= 2 calls)"
-          none: "Never contacted"
-      propensity_grade:
-        description: "Imagine model's propensity-to-pay grade."
+          RADM:  "Radiology Associates Main"
+          RADH:  "Radiology Associates Houston"
+          RADZ:  "Radiology Associates Zone"
+          RADE:  "Radiology Associates East"
+          TRI:   "Triangle Imaging"
+          NRAA:  "North Atlanta Radiology Associates"
+          CIRPA: "Central Imaging Partners"
+          IAI:   "Integrated Advanced Imaging"
+          ACR:   "Advanced Clinical Radiology"
+      patient_id:
+        description: "Local numeric patient ID within the source practice."
+      first_name:
+        description: "Patient first name. PII — redact in public outputs."
+      last_name:
+        description: "Patient last name. PII — redact in public outputs."
+      dob:
+        description: "Date of birth (datetime). Use for age calculations: duration.inDays(p.dob, date()) / 365."
       gender:
         description: "Patient self-reported gender."
+        values:
+          F: "Female"
+          M: "Male"
+      zip:
+        description: "Patient ZIP code. Use for geographic filtering and state inference."
+      phone_norm:
+        description: "Normalized 10-digit phone number. PII."
+      email:
+        description: "Patient email address. PII."
+      payor_cohort:
+        description: >
+          Coarse payor classification derived from primary insurance.
+          Used for cohort segmentation and outreach strategy.
+        values:
+          bai:           "BCBS Affiliated, Inc."
+          self_pay:      "Self-pay (no insurance)"
+          sapa:          "Self-pay (SAPA program)"
+          fully_covered: "Fully covered by insurance"
+          nraa:          "Non-resident / out-of-area"
+          tennessee:     "Tennessee-specific cohort"
+          atlanta_404:   "Atlanta 404 cohort"
+      call_tier:
+        description: >
+          Outreach intensity tier based on visit frequency.
+          Drives campaign assignment and contact priority.
+        values:
+          zero:        "No visits"
+          one:         "One visit"
+          two_to_four: "Two to four visits"
+          five_plus:   "Five or more visits"
+      propensity_grade:
+        description: "Propensity-to-pay grade from predictive model (A=highest, F=lowest)."
+      is_catastrophe:
+        description: "True if patient is flagged as a catastrophe case (large unrecoverable balance)."
+      is_self_pay:
+        description: "True if patient has no insurance and is responsible for full balance."
+      is_friction:
+        description: "True if patient shows friction behavior — repeated touches, slow to pay."
+      is_clean:
+        description: "True if patient has a clean payment record — paid on time, no friction."
+      is_fully_covered:
+        description: "True if patient is fully covered by insurance with minimal patient balance."
+      is_bai:
+        description: "True if patient is in the BCBS Affiliated, Inc. cohort."
+      multi_practice_flag:
+        description: "True if patient appears in more than one source practice."
+      has_any_calls:
+        description: "True if patient has received at least one outbound call."
+      has_insurance:
+        description: "True if patient has at least one active insurance plan on file."
+      outstanding_balance:
+        description: "Total outstanding patient-pay balance in dollars."
+      adj_bad_debt:
+        description: "Total amount written off to bad debt for this patient."
+      practice_count:
+        description: "Number of distinct practices this patient is registered in."
+      visit_count:
+        description: "Total number of visits across all practices."
+      charge_count:
+        description: "Total number of charge lines across all visits."
+      carrier_name:
+        description: "Primary insurance carrier name (e.g. CIGNA, BCBS, UNITED)."
+        values:
+          BCBS:   "Blue Cross Blue Shield"
+          CIGNA:  "Cigna Health"
+          UNITED: "United Healthcare"
+          AETNA:  "Aetna"
+          HUMANA: "Humana"
+          MEDICARE: "Medicare"
+          MEDICAID: "Medicaid"
+      plan_name:
+        description: "Primary insurance plan name (e.g. CIGNA POS, BCBS INDEMNITY)."
 
+  # ── Practice ─────────────────────────────────────────────────────────────
   Practice:
-    description: "An RP practice / source database. Keyed by Source_Database_Code."
+    description: >
+      An RP practice / source database. Each practice is an independent billing
+      entity. Keyed by source_db code.
+    properties:
+      source_db:
+        description: "Unique practice code. Foreign key that prefixes all patientIds from this practice."
+        values:
+          RADM:  "Radiology Associates Main"
+          RADH:  "Radiology Associates Houston"
+          RADZ:  "Radiology Associates Zone"
+          RADE:  "Radiology Associates East"
+          TRI:   "Triangle Imaging"
+          NRAA:  "North Atlanta Radiology Associates"
+          CIRPA: "Central Imaging Partners"
+          IAI:   "Integrated Advanced Imaging"
+          ACR:   "Advanced Clinical Radiology"
+      practice_name:
+        description: "Full human-readable practice name."
+      npi:
+        description: "National Provider Identifier for the practice."
+      state:
+        description: "State the practice operates in."
 
+  # ── Location ─────────────────────────────────────────────────────────────
   Location:
-    description: "A clinical site that performs visits."
+    description: >
+      A clinical site where visits are performed. A practice may have
+      multiple locations. Locations have their own NPI and may have
+      Birdeye reviews.
     properties:
+      location_id:
+        description: "Unique location identifier (e.g. ESR01, RADM-MAIN)."
+      location_name:
+        description: "Human-readable site name."
       location_type:
-        description: "Site classification (hospital, imaging center, etc.)."
+        description: "Site classification."
+        values:
+          hospital:       "Hospital outpatient"
+          imaging_center: "Freestanding imaging center"
+          office:         "Physician office"
+          mobile:         "Mobile / temporary site"
+      address:
+        description: "Street address of the location."
+      city:
+        description: "City the location is in."
+      state:
+        description: "State the location is in."
+      zip:
+        description: "ZIP code of the location."
+      npi:
+        description: "NPI for this specific site. May be null if not on file."
+      phone:
+        description: "Main contact phone for this location."
 
+  # ── InsurancePlan ─────────────────────────────────────────────────────────
   InsurancePlan:
-    description: "A payer plan that covers visits."
+    description: >
+      A payer plan that covers visits. One Visit may be UNDER_PLAN for up
+      to three plans (primary, secondary, tertiary). Plan priority is stored
+      on the relationship, not the node.
     properties:
+      plan_id:
+        description: "Internal plan identifier."
+      plan_name:
+        description: "Full plan name (e.g. CIGNA POS, BCBS INDEMNITY, UNITED TPA)."
+      carrier_name:
+        description: "Parent carrier / payer name."
+        values:
+          BCBS:     "Blue Cross Blue Shield"
+          CIGNA:    "Cigna Health"
+          UNITED:   "United Healthcare"
+          AETNA:    "Aetna"
+          HUMANA:   "Humana"
+          MEDICARE: "Medicare"
+          MEDICAID: "Medicaid"
       plan_type:
-        description: "Coverage type — HMO, PPO, Medicare, etc."
+        description: "Coverage model."
+        values:
+          HMO:        "Health Maintenance Organization"
+          PPO:        "Preferred Provider Organization"
+          POS:        "Point of Service"
+          INDEMNITY:  "Traditional indemnity / fee-for-service"
+          TPA:        "Third-party administrator"
+          MEDICARE:   "Medicare"
+          MEDICAID:   "Medicaid"
+          SELF:       "Self-pay / no plan"
+      plan_priority:
+        description: "Position on the visit — primary, secondary, or tertiary."
+        values:
+          primary:   "Primary payer"
+          secondary: "Secondary payer"
+          tertiary:  "Tertiary payer"
 
+  # ── Visit ─────────────────────────────────────────────────────────────────
   Visit:
-    description: "A patient encounter at a location."
-
-  Charge:
-    description: "A billable line item for a visit (one CPT/HCPCS procedure)."
+    description: >
+      A patient encounter at a location. The root billing event — charges,
+      insurance plans, and diagnoses all connect through the Visit.
     properties:
+      visit_id:
+        description: "Unique visit / encounter identifier."
+      admit_date:
+        description: "Date patient was admitted or service began (datetime)."
+      discharge_date:
+        description: "Date patient was discharged or service ended (datetime). Same as admit_date for same-day visits."
+      visit_date:
+        description: "Primary service date (datetime). Use for date-range filters."
+      modality:
+        description: "Imaging modality for this visit."
+        values:
+          MRI:  "Magnetic Resonance Imaging"
+          CT:   "Computed Tomography"
+          NM:   "Nuclear Medicine"
+          US:   "Ultrasound"
+          XR:   "X-Ray / Radiograph"
+          PET:  "Positron Emission Tomography"
+          DEXA: "Dual-energy X-ray Absorptiometry"
+          IR:   "Interventional Radiology"
+      visit_status:
+        description: "Current status of the visit."
+        values:
+          open:      "Open — charges still active"
+          closed:    "Closed — fully adjudicated"
+          void:      "Voided — removed from billing"
+          hold:      "On hold — pending review"
+
+  # ── Charge ────────────────────────────────────────────────────────────────
+  Charge:
+    description: >
+      A billable line item for a visit — one CPT/HCPCS procedure per charge.
+      A visit may have multiple charges. Charges are the unit that transactions
+      (payments and adjustments) settle against.
+    properties:
+      charge_id:
+        description: "Unique charge line identifier."
+      charge_amount:
+        description: "Original billed amount in dollars."
+      balance:
+        description: "Current outstanding balance on this charge line."
+      void_flag:
+        description: "True if this charge has been voided."
+      hold_flag:
+        description: "True if this charge is on hold pending review."
+      modality:
+        description: "Imaging modality for this charge (MRI, CT, NM, US, XR, PET, DEXA, IR)."
+      cpt_code:
+        description: "CPT/HCPCS procedure code billed on this charge."
+      units:
+        description: "Number of units billed."
       line_status:
         description: "Lifecycle state of the charge line."
-      place_of_service:
-        description: "POS code per CMS — 11=office, 21=inpatient, 22=outpatient, etc."
-
-  Transaction:
-    description: "A payment or adjustment posted against a charge."
-    properties:
-      adjustment_bucket:
-        description: "High-level adjustment category."
         values:
-          contractual: "Contractual write-off (per payer agreement)"
-          bad_debt: "Sent to bad debt"
-          collection_agency: "Placed with collection agency"
-          refund_reversal: "Refund or payment reversal"
-          other: "Other / uncategorized adjustment"
-      paysource:
-        description: "Who paid (patient, insurance, secondary, etc.)."
+          active:    "Active and billable"
+          paid:      "Fully paid"
+          adjusted:  "Adjusted / written off"
+          voided:    "Voided"
+          hold:      "On hold"
+          bad_debt:  "Written to bad debt"
+      place_of_service:
+        description: "CMS POS code."
+        values:
+          "11": "Office"
+          "21": "Inpatient hospital"
+          "22": "Outpatient hospital"
+          "23": "Emergency room"
+          "24": "Ambulatory surgical center"
+      post_date:
+        description: "Date the charge was posted to the billing system (datetime)."
+      service_date:
+        description: "Date the service was rendered (datetime)."
 
-  Statement:
-    description: "A billing statement sent to a patient."
-
-  RCCall:
-    description: "A RingCentral outbound dial event."
-
-  IVRInbound:
-    description: "An inbound IVR session (pay-by-phone or self-service)."
-
-  DiallerCall:
-    description: "An outbound dialler call event."
-
-  PhoneBridge:
-    description: "Mapping between phone numbers and known patients."
-    pii: ["phone_norm"]
-
-  Campaign:
-    description: "Named outreach campaign."
-
-  BirdeyeReview:
-    description: "Patient-posted review from Birdeye for a location."
+  # ── Transaction ───────────────────────────────────────────────────────────
+  Transaction:
+    description: >
+      A payment or adjustment posted against a charge. Transactions reduce
+      the charge balance. Multiple transactions may settle one charge
+      (e.g. insurance payment + patient co-pay + contractual write-off).
     properties:
+      transaction_id:
+        description: "Unique transaction identifier."
+      transaction_date:
+        description: "Date the transaction was posted (datetime)."
+      amount:
+        description: "Transaction amount in dollars. Positive = payment, negative = reversal."
+      transaction_type:
+        description: "High-level type of transaction."
+        values:
+          payment:    "Payment received"
+          adjustment: "Adjustment / write-off"
+          reversal:   "Payment reversal or refund"
+          denial:     "Payer denial"
+      paysource:
+        description: "Who or what originated this payment."
+        values:
+          patient:   "Patient payment (check, card, cash)"
+          insurance: "Primary insurance remittance"
+          secondary: "Secondary insurance remittance"
+          tertiary:  "Tertiary insurance remittance"
+          ers:       "Electronic remittance (ERS / ERA)"
+          ivr:       "IVR self-service payment (pay-by-phone)"
+          agency:    "Collection agency recovery"
+          refund:    "Refund issued to patient"
+          reversal:  "Payment reversal"
+      adjustment_bucket:
+        description: "High-level adjustment category (only populated for adjustment transactions)."
+        values:
+          contractual:        "Contractual write-off per payer agreement"
+          bad_debt:           "Written off to bad debt"
+          collection_agency:  "Placed with collection agency"
+          charity_care:       "Charity care write-off"
+          refund_reversal:    "Refund or payment reversal"
+          other:              "Other / uncategorized adjustment"
+      denial_code:
+        description: "CARC denial reason code (e.g. CO45, PR1, CO96). Populated on denial transactions."
+      denial_reason:
+        description: "Human-readable denial reason mapped from denial_code."
+      check_number:
+        description: "EOB / ERA check or EFT trace number."
+      payment_method:
+        description: "Payment method used."
+        values:
+          check: "Paper check"
+          eft:   "Electronic funds transfer"
+          card:  "Credit / debit card"
+          cash:  "Cash"
+          ivr:   "IVR phone payment"
+
+  # ── Statement ─────────────────────────────────────────────────────────────
+  Statement:
+    description: >
+      A billing statement sent to a patient. Statements are sent in
+      escalating levels. Delivery is attempted via email, text, and mail.
+    properties:
+      statement_id:
+        description: "Unique statement identifier."
+      statement_date:
+        description: "Date the statement was generated (datetime)."
+      statement_level:
+        description: "Escalation level — higher means more overdue."
+        values:
+          "1": "First statement"
+          "2": "Second statement — reminder"
+          "3": "Third statement — overdue notice"
+          "4": "Fourth statement — final notice"
+          "5": "Fifth statement — pre-collections"
+      delivery_method:
+        description: "How the statement was delivered."
+        values:
+          email: "Delivered by email"
+          text:  "Delivered by SMS / text"
+          mail:  "Delivered by postal mail"
+          failed: "All delivery methods failed"
+      hold_flag:
+        description: "True if statement is currently on hold and not yet sent."
+      amount_due:
+        description: "Amount due shown on this statement."
+      opened_flag:
+        description: "True if the patient opened / viewed the statement."
+
+  # ── RCCall ────────────────────────────────────────────────────────────────
+  RCCall:
+    description: >
+      A RingCentral outbound dial event. Linked to a Campaign and
+      attributed to a patient via PhoneBridge.
+    properties:
+      call_id:
+        description: "Unique RingCentral call identifier."
+      call_date:
+        description: "Date and time of the call (datetime)."
+      direction:
+        description: "Call direction."
+        values:
+          inbound:  "Inbound call from patient"
+          outbound: "Outbound call to patient"
+      outcome:
+        description: "Call outcome / disposition."
+        values:
+          connected:   "Agent connected with patient"
+          voicemail:   "Left voicemail"
+          no_answer:   "No answer"
+          busy:        "Line busy"
+          wrong_number: "Wrong number"
+          callback:    "Patient requested callback"
+      handle_time:
+        description: "Call handle time in seconds."
+      agent_id:
+        description: "ID of the agent who handled the call."
+      queue:
+        description: "Call queue / skill the call was routed through."
+      skill:
+        description: "Agent skill used for routing (e.g. PMR English, Collections Spanish)."
+
+  # ── IVRInbound ────────────────────────────────────────────────────────────
+  IVRInbound:
+    description: >
+      An inbound IVR session — patient called the pay-by-phone or
+      self-service line. May result in a payment transaction.
+    properties:
+      ivr_id:
+        description: "Unique IVR session identifier."
+      session_date:
+        description: "Date and time of the IVR session (datetime)."
+      outcome:
+        description: "Session outcome."
+        values:
+          paid:      "Patient completed payment"
+          abandoned: "Patient hung up before completing"
+          transferred: "Transferred to live agent"
+          info_only: "Patient retrieved balance info only"
+      amount_paid:
+        description: "Amount paid during this IVR session (0 if no payment)."
+      language:
+        description: "Language used during the session (English, Spanish, etc.)."
+
+  # ── DiallerCall ───────────────────────────────────────────────────────────
+  DiallerCall:
+    description: >
+      An outbound dialler call event from the predictive / power dialler.
+      Separate from RCCall — different system, same patient.
+    properties:
+      dialler_call_id:
+        description: "Unique dialler call identifier."
+      call_date:
+        description: "Date and time of the dialler call (datetime)."
+      outcome:
+        description: "Dialler call outcome."
+        values:
+          connected:   "Connected to patient"
+          voicemail:   "Voicemail left"
+          no_answer:   "No answer"
+          busy:        "Line busy"
+          do_not_call: "DNC — removed from dialler"
+      campaign_id:
+        description: "Campaign this dialler call belongs to."
+      agent_id:
+        description: "Agent ID if the call was connected and transferred."
+
+  # ── PhoneBridge ───────────────────────────────────────────────────────────
+  PhoneBridge:
+    description: >
+      Mapping between phone numbers and known patients. Enables attribution
+      of inbound and outbound calls to specific patients.
+    pii:
+      - phone_norm
+    properties:
+      phone_norm:
+        description: "Normalized 10-digit phone number. PII."
+      line_type:
+        description: "Phone line type."
+        values:
+          mobile:   "Mobile / cell"
+          landline: "Landline"
+          voip:     "VoIP"
+          unknown:  "Unknown"
+      is_primary:
+        description: "True if this is the patient's primary contact number."
+
+  # ── Campaign ──────────────────────────────────────────────────────────────
+  Campaign:
+    description: >
+      A named outreach campaign grouping a set of calls and patients
+      for a specific collection or engagement goal.
+    properties:
+      campaign_id:
+        description: "Unique campaign identifier."
+      campaign_name:
+        description: "Human-readable campaign name (e.g. SAPA, MRB, Atlanta 404)."
+      campaign_type:
+        description: "Type of campaign."
+        values:
+          collections:  "Collections outreach — recover outstanding balance"
+          engagement:   "Patient engagement / appointment reminder"
+          self_pay:     "Self-pay conversion campaign"
+          high_balance: "High-balance targeted outreach"
+      start_date:
+        description: "Campaign start date (datetime)."
+      end_date:
+        description: "Campaign end date (datetime). Null if still running."
+      status:
+        description: "Campaign status."
+        values:
+          active:   "Currently running"
+          paused:   "Temporarily paused"
+          complete: "Completed"
+
+  # ── BirdeyeReview ─────────────────────────────────────────────────────────
+  BirdeyeReview:
+    description: >
+      A patient-posted review for a Location sourced from Birdeye.
+      Used for reputation analysis and identifying dissatisfied patients
+      who may correlate with bad debt or low payment rates.
+    properties:
+      review_id:
+        description: "Unique Birdeye review identifier."
+      review_date:
+        description: "Date the review was posted (datetime)."
       rating:
-        description: "Star rating 1-5."
+        description: "Star rating given by the patient (1=worst, 5=best)."
+      review_text:
+        description: "Free-text review content. May contain PHI — handle with care."
+      sentiment:
+        description: "Derived sentiment classification."
+        values:
+          positive: "Positive sentiment"
+          neutral:  "Neutral / mixed sentiment"
+          negative: "Negative sentiment"
 
+  # ── DiagnosisCode ─────────────────────────────────────────────────────────
   DiagnosisCode:
-    description: "ICD-10 diagnosis code."
+    description: >
+      An ICD-10-CM diagnosis code. Organized in a hierarchy:
+      chapter > block > code. Charges link to one or more DiagnosisCodes
+      with a sequence position (primary, secondary, etc.).
+    properties:
+      code:
+        description: "ICD-10-CM code (e.g. I21.0, J18.9, M54.5)."
+      description:
+        description: "Full ICD-10 code description."
+      chapter:
+        description: "ICD-10 chapter (e.g. Circulatory, Respiratory, Musculoskeletal)."
+      block:
+        description: "ICD-10 block / subcategory within the chapter."
+      sequence:
+        description: "Position on the charge — primary, secondary, etc."
+        values:
+          "1": "Primary diagnosis"
+          "2": "Secondary diagnosis"
+          "3": "Tertiary diagnosis"
 
+  # ── ProcedureCode ─────────────────────────────────────────────────────────
   ProcedureCode:
-    description: "CPT/HCPCS procedure code."
+    description: >
+      A CPT or HCPCS procedure code. Each Charge USES_PROCEDURE one code.
+      Used for modality analysis, denial pattern analysis, and billing audits.
+    properties:
+      code:
+        description: "CPT or HCPCS code (e.g. 70553, 93306, G0439)."
+      description:
+        description: "Full procedure description."
+      modality:
+        description: "Imaging modality this procedure belongs to (MRI, CT, NM, US, XR, PET, DEXA, IR)."
+      rvu:
+        description: "Relative Value Unit — used for provider productivity measurement."
+
+
+# ── Relationships ─────────────────────────────────────────────────────────────
+#
+# Each entry includes: description, from node, to node, and an example
+# Cypher path. The example is injected into the text2cypher prompt so the
+# LLM knows the correct direction and hop pattern without guessing.
 
 relationships:
+
   REGISTERED_AT:
     description: "Patient is registered at a Practice."
+    from: Patient
+    to: Practice
+    example: "MATCH (p:Patient)-[:REGISTERED_AT]->(pr:Practice)"
+
   BELONGS_TO_PRACTICE:
     description: "Location belongs to a Practice."
+    from: Location
+    to: Practice
+    example: "MATCH (l:Location)-[:BELONGS_TO_PRACTICE]->(pr:Practice)"
+
   ISSUED_BY_PRACTICE:
-    description: "InsurancePlan is recognized by a Practice."
+    description: "InsurancePlan is recognized / issued by a Practice."
+    from: InsurancePlan
+    to: Practice
+    example: "MATCH (ip:InsurancePlan)-[:ISSUED_BY_PRACTICE]->(pr:Practice)"
+
   HAD_VISIT:
-    description: "Patient had a Visit."
+    description: "Patient had a Visit (encounter)."
+    from: Patient
+    to: Visit
+    example: "MATCH (p:Patient)-[:HAD_VISIT]->(v:Visit)"
+
   PERFORMED_AT:
     description: "Visit was performed at a Location."
+    from: Visit
+    to: Location
+    example: "MATCH (v:Visit)-[:PERFORMED_AT]->(l:Location)"
+
   UNDER_PLAN:
-    description: "Visit was covered under an InsurancePlan."
+    description: >
+      Visit was covered under an InsurancePlan. The relationship carries
+      a `priority` property: primary, secondary, or tertiary.
+    from: Visit
+    to: InsurancePlan
+    properties:
+      priority:
+        description: "Payer priority on this visit."
+        values:
+          primary:   "Primary payer"
+          secondary: "Secondary payer"
+          tertiary:  "Tertiary payer"
+    example: "MATCH (v:Visit)-[r:UNDER_PLAN]->(ip:InsurancePlan) WHERE r.priority = 'primary'"
+
   HAS_CHARGE:
-    description: "Patient was charged."
+    description: "Patient has a Charge (billable line item)."
+    from: Patient
+    to: Charge
+    example: "MATCH (p:Patient)-[:HAS_CHARGE]->(c:Charge)"
+
   PART_OF_VISIT:
     description: "Charge belongs to a Visit."
+    from: Charge
+    to: Visit
+    example: "MATCH (c:Charge)-[:PART_OF_VISIT]->(v:Visit)"
+
   AT_LOCATION:
     description: "Charge was incurred at a Location."
+    from: Charge
+    to: Location
+    example: "MATCH (c:Charge)-[:AT_LOCATION]->(l:Location)"
+
   DIAGNOSED_WITH:
-    description: "Charge is associated with a DiagnosisCode."
+    description: >
+      Charge is associated with a DiagnosisCode. The relationship carries
+      a `sequence` property (1=primary, 2=secondary, etc.).
+    from: Charge
+    to: DiagnosisCode
+    properties:
+      sequence:
+        description: "Diagnosis position on the charge (1=primary)."
+    example: "MATCH (c:Charge)-[r:DIAGNOSED_WITH]->(d:DiagnosisCode) WHERE r.sequence = 1"
+
   USES_PROCEDURE:
-    description: "Charge uses a ProcedureCode."
+    description: "Charge uses a ProcedureCode (CPT/HCPCS)."
+    from: Charge
+    to: ProcedureCode
+    example: "MATCH (c:Charge)-[:USES_PROCEDURE]->(pc:ProcedureCode)"
+
   SETTLES:
-    description: "Transaction settles a Charge (payment or adjustment)."
+    description: "Transaction settles a Charge (payment or adjustment reducing the balance)."
+    from: Transaction
+    to: Charge
+    example: "MATCH (t:Transaction)-[:SETTLES]->(c:Charge)"
+
   HAS_TRANSACTION:
     description: "Patient owns a Transaction."
+    from: Patient
+    to: Transaction
+    example: "MATCH (p:Patient)-[:HAS_TRANSACTION]->(t:Transaction)"
+
   RECEIVED_STATEMENT:
     description: "Patient received a Statement."
+    from: Patient
+    to: Statement
+    example: "MATCH (p:Patient)-[:RECEIVED_STATEMENT]->(s:Statement)"
+
   PART_OF_CAMPAIGN:
     description: "RCCall participates in a Campaign."
+    from: RCCall
+    to: Campaign
+    example: "MATCH (rc:RCCall)-[:PART_OF_CAMPAIGN]->(cam:Campaign)"
+
   ATTRIBUTED_TO_PHONE:
-    description: "RCCall is attributable to a PhoneBridge entry."
+    description: "RCCall is attributable to a PhoneBridge entry (links call to phone number)."
+    from: RCCall
+    to: PhoneBridge
+    example: "MATCH (rc:RCCall)-[:ATTRIBUTED_TO_PHONE]->(pb:PhoneBridge)"
+
   IDENTIFIED_BY_PHONE:
-    description: "Patient is identified by a PhoneBridge entry."
+    description: "Patient is identified by a PhoneBridge entry (links patient to phone number)."
+    from: Patient
+    to: PhoneBridge
+    example: "MATCH (p:Patient)-[:IDENTIFIED_BY_PHONE]->(pb:PhoneBridge)"
+
   CALLED_IVR:
-    description: "Patient called the IVR system."
+    description: "Patient initiated an inbound IVR session."
+    from: Patient
+    to: IVRInbound
+    example: "MATCH (p:Patient)-[:CALLED_IVR]->(ivr:IVRInbound)"
+
   CONTACTED_BY_DIALLER:
     description: "Patient was dialled by the outbound dialler."
+    from: Patient
+    to: DiallerCall
+    example: "MATCH (p:Patient)-[:CONTACTED_BY_DIALLER]->(dc:DiallerCall)"
+
   REVIEWS:
-    description: "BirdeyeReview is about a Location."
+    description: "BirdeyeReview is posted about a Location."
+    from: BirdeyeReview
+    to: Location
+    example: "MATCH (br:BirdeyeReview)-[:REVIEWS]->(l:Location)"
+
   RUN_BY:
     description: "Campaign is run by a Practice."
+    from: Campaign
+    to: Practice
+    example: "MATCH (cam:Campaign)-[:RUN_BY]->(pr:Practice)"
 
-# Allowed topic patterns — used by guardrails/input.py to reject off-topic
-# or jailbreak-style questions. Lower-case substring match on the question.
+  SAME_PERSON_AS:
+    description: >
+      Cross-practice identity link — two Patient nodes representing the
+      same human being across different source practices.
+      Use for multi-practice patient queries.
+    from: Patient
+    to: Patient
+    example: "MATCH (p1:Patient)-[:SAME_PERSON_AS]->(p2:Patient)"
+
+  DIALLER_PART_OF_CAMPAIGN:
+    description: "DiallerCall participates in a Campaign."
+    from: DiallerCall
+    to: Campaign
+    example: "MATCH (dc:DiallerCall)-[:DIALLER_PART_OF_CAMPAIGN]->(cam:Campaign)"
+
+
+# ── Common multi-hop paths ────────────────────────────────────────────────────
+#
+# Injected into the text2cypher prompt to guide the LLM on join chains
+# that are non-obvious from the schema alone. These are the paths most
+# commonly needed for medium and hard questions.
+
+common_paths:
+  patient_to_carrier: >
+    MATCH (p:Patient)-[:HAD_VISIT]->(v:Visit)-[:UNDER_PLAN]->(ip:InsurancePlan)
+    WHERE ip.plan_priority = 'primary'
+  patient_to_location: >
+    MATCH (p:Patient)-[:HAD_VISIT]->(v:Visit)-[:PERFORMED_AT]->(l:Location)
+  patient_to_diagnosis: >
+    MATCH (p:Patient)-[:HAS_CHARGE]->(c:Charge)-[:DIAGNOSED_WITH]->(d:DiagnosisCode)
+  patient_to_procedure: >
+    MATCH (p:Patient)-[:HAS_CHARGE]->(c:Charge)-[:USES_PROCEDURE]->(pc:ProcedureCode)
+  patient_to_agent: >
+    MATCH (p:Patient)-[:IDENTIFIED_BY_PHONE]->(pb:PhoneBridge)<-[:ATTRIBUTED_TO_PHONE]-(rc:RCCall)
+  charge_to_payment: >
+    MATCH (c:Charge)<-[:SETTLES]-(t:Transaction) WHERE t.transaction_type = 'payment'
+  charge_to_denial: >
+    MATCH (c:Charge)<-[:SETTLES]-(t:Transaction) WHERE t.transaction_type = 'denial'
+  cross_practice_patient: >
+    MATCH (p1:Patient)-[:SAME_PERSON_AS]->(p2:Patient)
+    MATCH (p1)-[:HAD_VISIT]->(v1:Visit), (p2)-[:HAD_VISIT]->(v2:Visit)
+  location_to_reviews: >
+    MATCH (l:Location)<-[:REVIEWS]-(br:BirdeyeReview)
+  patient_full_balance: >
+    MATCH (p:Patient)-[:HAS_CHARGE]->(c:Charge)
+    WHERE c.balance > 0
+    RETURN p.patientId, sum(c.balance) AS total_balance
+
+
+# ── Allowed topic patterns ────────────────────────────────────────────────────
+# Used by guardrails/input.py to reject off-topic or jailbreak-style questions.
+# Lower-case substring match on the incoming question text.
+
 allowed_topics:
+  # Entities
   - patient
   - patients
   - practice
@@ -159,14 +785,14 @@ allowed_topics:
   - encounter
   - charge
   - charges
-  - balance
-  - bad debt
-  - payor
-  - payment
   - transaction
+  - payment
   - insurance
+  - carrier
+  - plan
   - statement
   - campaign
+  - agent
   - dialler
   - dialer
   - ringcentral
@@ -174,21 +800,75 @@ allowed_topics:
   - birdeye
   - review
   - rating
-  - cohort
   - procedure
   - diagnosis
   - icd
   - cpt
+  - hcpcs
+  # Financial
+  - balance
+  - bad debt
+  - collections
+  - collection
+  - outstanding
+  - aging
+  - write-off
+  - writeoff
+  - adjustment
+  - denial
+  - refund
+  - reimbursement
+  - revenue
+  - billed
+  - paid
+  - a/r
+  - ar
+  # Cohorts / segments
+  - cohort
+  - catastrophe
+  - friction
+  - clean
+  - self-pay
+  - self pay
+  - payor
+  - payer
+  - propensity
+  - sapa
+  - nraa
+  - tennessee
+  - atlanta
+  # Clinical
   - modality
   - radiology
   - imaging
-  - tennessee
-  - atlanta
+  - mri
+  - ct scan
+  - ultrasound
+  - nuclear medicine
+  # Geography
   - state
   - zip
-  - propensity
-  - collection
-  - self-pay
-  - self pay
+  - city
+  - texas
+  - florida
+  - houston
+  # Operations
+  - campaign
+  - outreach
+  - call
+  - calls
+  - contact
+  - statement
+  # Schema / meta
   - graph
   - schema
+  - how many
+  - show me
+  - list
+  - find
+  - top
+  - average
+  - total
+  - compare
+  - trend
+  - breakdown

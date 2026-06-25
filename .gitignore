@@ -49,3 +49,5 @@ docker-compose.override.yml
 .env
 dockers/import/
 dockers/plugins/
+notebooks/neo4j_import/
+tests/eval/reports/

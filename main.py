@@ -19,6 +19,9 @@ Usage:
 import sys
 import logging
 import asyncio
+from glob import glob
+from pathlib import Path
+from qa.chain import stream_qa_response
 
 logging.basicConfig(
     level=logging.INFO,
@@ -27,6 +30,8 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+
 
 
 def cmd_serve():
@@ -134,10 +139,7 @@ async def cmd_warm(paths: list[str]):
     Re-runnable: questions already in the cache report as 'cached' and don't
     re-hit the LLM. Errored questions don't block the rest of the run.
     """
-    from glob import glob
-    from pathlib import Path
-    from qa.chain import stream_qa_response
-
+    
     files: list[Path] = []
     for p in paths:
         path = Path(p)

@@ -16,6 +16,7 @@ import logging
 import asyncio
 from contextlib import asynccontextmanager
 
+from anthropic import BaseModel
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -28,6 +29,15 @@ from config import get_settings
 
 logger = logging.getLogger(__name__)
 
+class AskRequest(BaseModel):
+    question: str
+
+class AskResponse(BaseModel):
+    question: str
+    cypher: str | None
+    answer: str
+    latency_s: float
+    
 
 # ── Lifespan ──────────────────────────────────────────────────────────────────
 
@@ -113,6 +123,27 @@ async def sample_questions():
             "What is the contractual adjustment total by practice?",
         ]
     }
+
+
+@app.post("/ask")
+async def ask(req: AskRequest):
+    import time
+    t0 = time.perf_counter()
+    cypher = None
+    answer = ""
+    async for chunk in stream_qa_response(req.question):
+        if chunk["type"] == "cypher":
+            cypher = chunk["data"]
+        elif chunk["type"] == "token":
+            answer += chunk["data"]
+        elif chunk["type"] == "error":
+            raise HTTPException(status_code=500, detail=chunk["data"])
+    return AskResponse(
+        question=req.question,
+        cypher=cypher or "",
+        answer=answer,
+        latency_s=round(time.perf_counter() - t0, 3),
+    )
 
 
 # ── WebSocket endpoint ────────────────────────────────────────────────────────
