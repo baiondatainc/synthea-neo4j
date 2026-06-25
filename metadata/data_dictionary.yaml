@@ -10,9 +10,54 @@
 # example Cypher paths for all relationships.
 #
 # Keep this file authoritative — `catalog.py` loads it once at startup.
+# ── Token budget ──────────────────────────────────────────────────────────────
+# ── Token budget ──────────────────────────────────────────────────────────────
+token_budget:
+  schema_char_budget: 3600      # 900 tokens × 4 chars
+  min_rel_budget: 200           # minimum chars remaining before adding rels
+  min_path_budget: 150          # minimum chars remaining before adding paths
+  max_values_shown: 4           # max value examples per property
+  max_prop_desc_chars: 60       # truncate property descriptions to this length
+
+# ── Label keywords (drives schema_for_question selection) ────────────────────
+label_keywords:
+  Patient:       ["patient", "patients", "cohort", "balance", "payor", "payer",
+                  "self-pay", "self pay", "sapa", "bai", "propensity", "bad debt"]
+  Visit:         ["visit", "encounter", "admission", "discharge", "modality",
+                  "mri", "ct", "ultrasound", "imaging", "radiology"]
+  Charge:        ["charge", "charges", "cpt", "hcpcs", "procedure", "billed",
+                  "line", "outstanding", "balance", "write-off", "void"]
+  Transaction:   ["payment", "transaction", "adjustment", "denial", "bad debt",
+                  "collection", "ers", "era", "paid", "refund", "co45", "carc"]
+  Statement:     ["statement", "bill", "notice", "level", "delivery"]
+  InsurancePlan: ["insurance", "plan", "carrier", "payer", "coverage",
+                  "primary", "secondary", "hmo", "ppo", "medicare", "medicaid"]
+  Location:      ["location", "site", "facility", "center", "where", "address"]
+  Practice:      ["practice", "source", "radm", "radh", "tri", "nraa",
+                  "cirpa", "iai", "rade", "acr", "radz"]
+  RCCall:        ["call", "calls", "ringcentral", "agent", "handle", "queue",
+                  "skill", "connected", "voicemail", "outcome"]
+  IVRInbound:    ["ivr", "inbound", "self-service", "pay by phone", "phone payment"]
+  DiallerCall:   ["dialler", "dialer", "outbound", "predictive"]
+  Campaign:      ["campaign", "outreach", "sapa", "mrb", "atlanta 404"]
+  BirdeyeReview: ["review", "rating", "birdeye", "stars", "sentiment", "satisfaction"]
+  DiagnosisCode: ["diagnosis", "icd", "icd-10", "condition", "disease"]
+  ProcedureCode: ["procedure", "cpt", "hcpcs", "code", "rvu", "modality"]
+
+# ── Path keywords (drives common_paths selection) ─────────────────────────────
+path_keywords:
+  patient_to_carrier:     ["carrier", "insurance", "plan", "payer", "coverage"]
+  patient_to_location:    ["location", "site", "facility", "where", "center"]
+  patient_to_diagnosis:   ["diagnosis", "icd", "condition", "disease"]
+  patient_to_procedure:   ["procedure", "cpt", "modality", "mri", "ct"]
+  patient_to_agent:       ["agent", "call", "ringcentral", "who called"]
+  charge_to_payment:      ["payment", "paid", "collected", "cash"]
+  charge_to_denial:       ["denial", "denied", "rejected", "co45"]
+  cross_practice_patient: ["multi-practice", "multiple practices", "same patient"]
+  location_to_reviews:    ["review", "rating", "birdeye", "stars"]
+  patient_full_balance:   ["balance", "outstanding", "owe", "total balance"]
 
 labels:
-
   # ── Patient ──────────────────────────────────────────────────────────────
   Patient:
     description: >

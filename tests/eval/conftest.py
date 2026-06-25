@@ -101,10 +101,14 @@ def generate_cypher(request, cypher_llm, cypher_prompt):
         client = httpx.Client(base_url=base_url, timeout=60.0)
 
         def _gen_http(question: str) -> str:
-            resp = client.post("/ask", json={"question": question})
-            resp.raise_for_status()
-            data = resp.json()
-            return data.get("cypher", "")
+            try:
+                resp = client.post("/ask", json={"question": question})
+                resp.raise_for_status()
+                data = resp.json()
+                return data.get("cypher", "")
+            except Exception as e:
+                print(f"\n[eval] Error generating Cypher for question '{question}': {e}", file=sys.stderr)                
+                return ""
 
         yield _gen_http
         client.close()
@@ -221,7 +225,21 @@ def _write_markdown(path: Path, summary: dict, records: list[dict]) -> None:
     lines.append("All questions with their generated Cypher, in order.")
     lines.append("")
     for r in records:
-        lines.append(f"**{r['question']}**")
+        if r.get("error"):
+            lines.append(f"> ⚠️ Error: `{r['error']}`")
+     
+        if r.get("execution_error"):
+            lines.append(f"> ⚠️ EXPLAIN error: `{r['execution_error']}`")
+        lines.append("")
+        
+        status = "✅" if r["cypher_generated"] else "❌"
+        exec_status = ""
+
+        latency = r.get("latency_s")
+        latency_str = f" · ⏱ {latency}s" if latency is not None else ""
+
+
+        lines.append(f"### Q{r['number']} [{r['difficulty']}] {status}{exec_status}{latency_str} - **{r['question']}**")
         lines.append("")
         cypher = (r.get("cypher") or "").strip()
         if cypher:
@@ -230,22 +248,6 @@ def _write_markdown(path: Path, summary: dict, records: list[dict]) -> None:
             lines.append("```")
         else:
             lines.append("_No Cypher generated._")
-     
-        if r.get("error"):
-            lines.append(f"> ⚠️ Error: `{r['error']}`")
-     
-        if r.get("execution_error"):
-            lines.append(f"> ⚠️ EXPLAIN error: `{r['execution_error']}`")
-        lines.append("")
-        status = "✅" if r["cypher_generated"] else "❌"
-        exec_status = ""
-        # Change this line in the Generated Cypher queries section:
-        # To this — adds latency after the exec status:
-        latency = r.get("latency_s")
-        latency_str = f" · ⏱ {latency}s" if latency is not None else ""
-        lines.append(
-            f"### Q{r['number']} [{r['difficulty']}] {status}{exec_status}{latency_str}"
-        )
 
 
     def table(title: str, buckets: dict):

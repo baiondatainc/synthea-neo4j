@@ -10,16 +10,26 @@ WebSocket protocol (JSON messages):
   Server → Client: {"type": "error",   "data": "error message"}
 
 Also exposes OpenAI-compatible /v1/chat/completions for LibreChat.
+
+Routes
+------
+  GET  /health               — Neo4j connectivity check
+  GET  /stats                — node + relationship counts
+  GET  /sample-questions     — example questions for the UI
+  POST /ask                  — one-shot question → cypher + answer + latency
+  GET  /catalog              — full data dictionary rendered as HTML
+  GET  /catalog.json         — full data dictionary as JSON
+  WS   /ws/qa                — streaming QA WebSocket
 """
 import json
 import logging
-import asyncio
+import time
 from contextlib import asynccontextmanager
 
-from anthropic import BaseModel
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
+from pydantic import BaseModel                          # ← pydantic, not anthropic
 
 from graph.connection import Neo4jConnection
 from qa.chain import stream_qa_response
@@ -29,6 +39,9 @@ from config import get_settings
 
 logger = logging.getLogger(__name__)
 
+
+# ── Request / response models ─────────────────────────────────────────────────
+
 class AskRequest(BaseModel):
     question: str
 
@@ -37,14 +50,14 @@ class AskResponse(BaseModel):
     cypher: str | None
     answer: str
     latency_s: float
-    
+
 
 # ── Lifespan ──────────────────────────────────────────────────────────────────
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("🚀 Starting HealthGraph AI QA Server (RP)...")
-    Neo4jConnection.get_driver()   # warm up connection pool
+    Neo4jConnection.get_driver()
     yield
     Neo4jConnection.close()
     logger.info("Server shut down")
@@ -79,12 +92,15 @@ async def health():
         Neo4jConnection.run_query("RETURN 1 AS ok")
         return {"status": "ok", "neo4j": "connected"}
     except Exception as e:
-        return JSONResponse(status_code=503, content={"status": "error", "detail": str(e)})
+        return JSONResponse(
+            status_code=503,
+            content={"status": "error", "detail": str(e)},
+        )
 
 
 @app.get("/stats")
 async def graph_stats():
-    """Return node and relationship counts for the RP knowledge graph."""
+    """Node and relationship counts for the RP knowledge graph."""
     queries = {
         "patients":      "MATCH (n:Patient) RETURN count(n) AS count",
         "practices":     "MATCH (n:Practice) RETURN count(n) AS count",
@@ -125,10 +141,10 @@ async def sample_questions():
     }
 
 
-@app.post("/ask")
+@app.post("/ask", response_model=AskResponse)
 async def ask(req: AskRequest):
-    import time
-    t0 = time.perf_counter()
+    """One-shot question → Cypher + answer + server latency."""
+    t0     = time.perf_counter()
     cypher = None
     answer = ""
     async for chunk in stream_qa_response(req.question):
@@ -146,6 +162,77 @@ async def ask(req: AskRequest):
     )
 
 
+# ── Catalog routes ────────────────────────────────────────────────────────────
+
+@app.get(
+    "/catalog",
+    response_class=HTMLResponse,
+    summary="Data dictionary — HTML",
+    description=(
+        "Renders the full RP data dictionary as a browsable HTML page. "
+        "Shows all node labels, properties, value maps, relationships, "
+        "common Cypher paths, and the token-budget config used at runtime."
+    ),
+    tags=["Catalog"],
+)
+async def catalog_html():
+    """Full data dictionary rendered as HTML — open in a browser."""
+    from metadata.catalog import get_catalog
+    html = get_catalog().to_html()
+    return HTMLResponse(content=html)
+
+
+@app.get(
+    "/catalog.json",
+    summary="Data dictionary — JSON",
+    description="Returns the raw data_dictionary.yaml content as JSON.",
+    tags=["Catalog"],
+)
+async def catalog_json():
+    """Raw data dictionary as JSON — useful for tooling and debugging."""
+    from metadata.catalog import get_catalog
+    cat = get_catalog()
+    return {
+        "labels":         cat.labels,
+        "relationships":  cat.relationships,
+        "allowed_topics": cat.allowed_topics,
+        "token_budget":   cat._doc.get("token_budget", {}),
+        "label_keywords": cat._doc.get("label_keywords", {}),
+        "path_keywords":  cat._doc.get("path_keywords", {}),
+        "common_paths":   cat._doc.get("common_paths", {}),
+    }
+
+
+@app.get(
+    "/catalog/schema",
+    summary="Focused schema for a question",
+    description=(
+        "Returns the focused schema block that would be injected into the "
+        "Cypher LLM prompt for a given question. "
+        "Useful for debugging token budget and keyword matching."
+    ),
+    tags=["Catalog"],
+)
+async def catalog_schema(question: str):
+    """
+    Preview what schema block schema_for_question() produces for this question.
+
+    Query param: ?question=show+me+patients+with+bad+debt
+    """
+    from metadata.catalog import get_catalog
+    cat    = get_catalog()
+    schema = cat.schema_for_question(question)
+    counts = cat.schema_token_count(question)
+    return {
+        "question":      question,
+        "schema":        schema,
+        "focused_tokens": counts["focused_tokens"],
+        "full_tokens":    counts["full_tokens"],
+        "budget_tokens":  cat._char_budget // 4,
+        "within_budget":  counts["focused_tokens"] <= cat._char_budget // 4,
+    }
+
+
 # ── WebSocket endpoint ────────────────────────────────────────────────────────
 
 @app.websocket("/ws/qa")
@@ -157,7 +244,7 @@ async def websocket_qa(websocket: WebSocket):
         while True:
             raw = await websocket.receive_text()
             try:
-                payload = json.loads(raw)
+                payload  = json.loads(raw)
                 question = payload.get("question", "").strip()
             except json.JSONDecodeError:
                 question = raw.strip()
@@ -167,7 +254,9 @@ async def websocket_qa(websocket: WebSocket):
                 continue
 
             logger.info(f"Question: {question}")
-            await websocket.send_json({"type": "thinking", "data": "Generating Cypher query..."})
+            await websocket.send_json(
+                {"type": "thinking", "data": "Generating Cypher query..."}
+            )
 
             try:
                 async for chunk in stream_qa_response(question):
