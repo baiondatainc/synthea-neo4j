@@ -20,6 +20,12 @@ Routes
   GET  /catalog              — full data dictionary rendered as HTML
   GET  /catalog.json         — full data dictionary as JSON
   WS   /ws/qa                — streaming QA WebSocket
+
+Changes vs previous version:
+  - /ask: passes conversation_id and use_cache into stream_qa_response (was dropped)
+  - /ask: captures "rewrite" event and returns rewritten_question in response
+  - AskResponse: added rewritten_question field
+  - /cache/clear: moved here from openai_compat (single place for cache admin)
 """
 import json
 import logging
@@ -29,7 +35,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, HTMLResponse
-from pydantic import BaseModel                          # ← pydantic, not anthropic
+from pydantic import BaseModel
 
 from graph.connection import Neo4jConnection
 from qa.chain import stream_qa_response
@@ -44,12 +50,17 @@ logger = logging.getLogger(__name__)
 
 class AskRequest(BaseModel):
     question: str
+    conversation_id: str | None = None
+    use_cache: bool = True          # set False to force a fresh run (eval, debug)
+
 
 class AskResponse(BaseModel):
     question: str
-    cypher: str | None
+    conversation_id: str | None = None
+    cypher: str | None = None
     answer: str
     latency_s: float
+    rewritten_question: str | None = None   # populated when rewriter fires
 
 
 # ── Lifespan ──────────────────────────────────────────────────────────────────
@@ -143,23 +154,69 @@ async def sample_questions():
 
 @app.post("/ask", response_model=AskResponse)
 async def ask(req: AskRequest):
-    """One-shot question → Cypher + answer + server latency."""
-    t0     = time.perf_counter()
-    cypher = None
+    """
+    One-shot question → Cypher + answer + server latency.
+
+    Passes conversation_id through to the chain so Phase B memory and
+    the rewriter are active. Returns rewritten_question when the rewriter
+    expanded an elliptical follow-up.
+    """
+    t0 = time.perf_counter()
+    cypher: str | None = None
     answer = ""
-    async for chunk in stream_qa_response(req.question):
-        if chunk["type"] == "cypher":
-            cypher = chunk["data"]
-        elif chunk["type"] == "token":
-            answer += chunk["data"]
-        elif chunk["type"] == "error":
-            raise HTTPException(status_code=500, detail=chunk["data"])
+    rewritten_question: str | None = None
+
+    logger.info(
+        f"/ask: question={req.question!r:.80} "
+        f"conv_id={req.conversation_id!r} "
+        f"use_cache={req.use_cache}"
+    )
+
+    async for chunk in stream_qa_response(
+        req.question,
+        conversation_id=req.conversation_id,   # ← was missing; now passed
+        use_cache=req.use_cache,               # ← was missing; now passed
+    ):
+        t = chunk["type"]
+
+        if t == "rewrite":
+            rewritten_question = chunk.get("data")
+            logger.info(f"/ask: rewriter fired → {rewritten_question!r:.120}")
+
+        elif t == "cypher":
+            cypher = chunk.get("data") or None
+
+        elif t == "token":
+            answer += chunk.get("data", "")
+
+        elif t == "blocked":
+            raise HTTPException(status_code=400, detail=chunk.get("data", "Blocked by guardrail"))
+
+        elif t == "error":
+            raise HTTPException(status_code=500, detail=chunk.get("data", "Pipeline error"))
+
+        elif t == "end":
+            break
+
     return AskResponse(
         question=req.question,
-        cypher=cypher or "",
+        conversation_id=req.conversation_id,
+        cypher=cypher,
         answer=answer,
         latency_s=round(time.perf_counter() - t0, 3),
+        rewritten_question=rewritten_question,
     )
+
+
+# ── Cache admin ───────────────────────────────────────────────────────────────
+
+@app.post("/cache/clear")
+async def cache_clear():
+    """Wipe the answer cache. Use after a schema or ingestion change."""
+    from cache import get_answer_cache
+    deleted = get_answer_cache().clear_all()
+    logger.info(f"Cache cleared: {deleted} keys deleted")
+    return {"cleared": deleted}
 
 
 # ── Catalog routes ────────────────────────────────────────────────────────────
@@ -220,12 +277,12 @@ async def catalog_schema(question: str):
     Query param: ?question=show+me+patients+with+bad+debt
     """
     from metadata.catalog import get_catalog
-    cat    = get_catalog()
+    cat = get_catalog()
     schema = cat.schema_for_question(question)
     counts = cat.schema_token_count(question)
     return {
-        "question":      question,
-        "schema":        schema,
+        "question":       question,
+        "schema":         schema,
         "focused_tokens": counts["focused_tokens"],
         "full_tokens":    counts["full_tokens"],
         "budget_tokens":  cat._char_budget // 4,
@@ -244,22 +301,33 @@ async def websocket_qa(websocket: WebSocket):
         while True:
             raw = await websocket.receive_text()
             try:
-                payload  = json.loads(raw)
-                question = payload.get("question", "").strip()
+                payload         = json.loads(raw)
+                question        = payload.get("question", "").strip()
+                conversation_id = payload.get("conversation_id")
+                use_cache       = payload.get("use_cache", False)
             except json.JSONDecodeError:
-                question = raw.strip()
+                question        = raw.strip()
+                conversation_id = None
+                use_cache       = False
 
             if not question:
                 await websocket.send_json({"type": "error", "data": "Empty question"})
                 continue
 
-            logger.info(f"Question: {question}")
+            logger.info(
+                f"WebSocket question: {question!r:.80} "
+                f"conv_id={conversation_id!r}"
+            )
             await websocket.send_json(
                 {"type": "thinking", "data": "Generating Cypher query..."}
             )
 
             try:
-                async for chunk in stream_qa_response(question):
+                async for chunk in stream_qa_response(
+                    question,
+                    conversation_id=conversation_id,
+                    use_cache=use_cache,
+                ):
                     await websocket.send_json(chunk)
             except Exception as e:
                 logger.error(f"Chain error: {e}", exc_info=True)

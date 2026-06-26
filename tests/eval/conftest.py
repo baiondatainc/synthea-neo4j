@@ -340,3 +340,241 @@ def pytest_sessionfinish(session, exitstatus):
 def _stash_metrics(request, metrics):
     request.session._eval_metrics = metrics
     yield
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ADD THESE TO YOUR EXISTING conftest.py
+# ─────────────────────────────────────────────────────────────────────────────
+
+# 1. New fixture: generate_cypher_with_conv
+#    Drop this alongside the existing generate_cypher fixture.
+#    It sends an extra conversation_id so the memory/rewriter layer fires.
+
+@pytest.fixture(scope="session")
+def generate_cypher_with_conv(request, cypher_llm, cypher_prompt):
+    """
+    Like generate_cypher but accepts a conversation_id so the full
+    memory + rewriter pipeline runs. Returns a dict:
+      {
+        "cypher":             str,
+        "rewritten_question": str | None,   # set if rewriter fired
+        "answer":             str,
+        "latency_s":          float,
+      }
+
+    HTTP mode (--eval-url): POST /ask with {"question": ..., "conversation_id": ...}
+    Direct mode: calls stream_qa_response directly (requires running event loop).
+    """
+    base_url = request.config.getoption("--eval-url", default="").rstrip("/")
+
+    if base_url:
+        import httpx
+        client = httpx.Client(base_url=base_url, timeout=90.0)
+
+        def _gen_http(question: str, conversation_id: str | None = None) -> dict:
+            try:
+                payload = {"question": question}
+                if conversation_id:
+                    payload["conversation_id"] = conversation_id
+                resp = client.post("/ask", json=payload)
+                resp.raise_for_status()
+                data = resp.json()
+                return {
+                    "cypher":             data.get("cypher", ""),
+                    "rewritten_question": data.get("rewritten_question"),
+                    "answer":             data.get("answer", ""),
+                    "latency_s":          data.get("latency_s"),
+                }
+            except Exception as exc:
+                import sys
+                print(f"\n[eval] HTTP error for {question!r}: {exc}", file=sys.stderr)
+                return {"cypher": "", "rewritten_question": None, "answer": "", "latency_s": None}
+
+        yield _gen_http
+        client.close()
+
+    else:
+        # Direct path: run stream_qa_response in a fresh event loop per call.
+        import asyncio
+        from qa.chain import stream_qa_response
+
+        def _gen_direct(question: str, conversation_id: str | None = None) -> dict:
+            cypher = ""
+            rewritten = None
+            answer_parts: list[str] = []
+
+            async def _run():
+                nonlocal cypher, rewritten
+                async for ev in stream_qa_response(
+                    question,
+                    conversation_id=conversation_id,
+                    use_cache=False,   # always fresh during eval
+                ):
+                    if ev["type"] == "rewrite":
+                        rewritten = ev.get("data")
+                    elif ev["type"] == "token":
+                        answer_parts.append(ev.get("data", ""))
+                    elif ev["type"] == "cypher":
+                        cypher = ev.get("data", "")
+
+            asyncio.run(_run())
+            return {
+                "cypher":             cypher,
+                "rewritten_question": rewritten,
+                "answer":             "".join(answer_parts),
+                "latency_s":          None,
+            }
+
+        yield _gen_direct
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 2. Update _write_markdown to include a context chain section.
+#    Find your existing _write_markdown function and add this block
+#    AFTER the "Generated Cypher queries" section for structural questions.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _context_chain_section(records: list[dict]) -> list[str]:
+    """
+    Build the context chain section for the markdown report.
+    Call this from _write_markdown after the structural Cypher section.
+    """
+    chain_records = [r for r in records if r.get("thread_id")]
+    if not chain_records:
+        return []
+
+    lines: list[str] = []
+    lines.append("---")
+    lines.append("")
+    lines.append("# Context chain eval")
+    lines.append("")
+
+    # Summary table
+    threads_seen = {}
+    for r in chain_records:
+        tid = r["thread_id"]
+        if tid not in threads_seen:
+            threads_seen[tid] = {"label": r["thread_label"], "turns": [], "pass": True}
+        threads_seen[tid]["turns"].append(r)
+        if not r["cypher_generated"]:
+            threads_seen[tid]["pass"] = False
+
+    total_threads = len(threads_seen)
+    passed_threads = sum(1 for v in threads_seen.values() if v["pass"])
+    total_turns = len(chain_records)
+    passed_turns = sum(1 for r in chain_records if r["cypher_generated"])
+    rewrites = sum(1 for r in chain_records if r.get("rewritten"))
+    rewrite_hint_fails = sum(
+        1 for r in chain_records
+        if r.get("rewritten") and not r.get("rewrite_hint_ok", True)
+    )
+
+    lines.append(f"**Threads:** {total_threads}  |  "
+                 f"**Thread pass rate:** {passed_threads}/{total_threads}  |  "
+                 f"**Turn pass rate:** {passed_turns}/{total_turns}  |  "
+                 f"**Rewrites fired:** {rewrites}  |  "
+                 f"**Rewrite hint mismatches:** {rewrite_hint_fails}")
+    lines.append("")
+
+    # Thread summary table
+    lines.append("| Thread | Label | Turns | Pass | Rewrites |")
+    lines.append("|---|---|---|---|---|")
+    for tid, info in threads_seen.items():
+        n = len(info["turns"])
+        p = sum(1 for r in info["turns"] if r["cypher_generated"])
+        rw = sum(1 for r in info["turns"] if r.get("rewritten"))
+        status = "✅" if info["pass"] else "❌"
+        lines.append(f"| {tid} | {info['label']} | {p}/{n} | {status} | {rw} |")
+    lines.append("")
+
+    # Per-thread detail
+    lines.append("## Thread detail")
+    lines.append("")
+
+    for tid, info in threads_seen.items():
+        lines.append(f"### {tid} — {info['label']}")
+        lines.append("")
+        for r in info["turns"]:
+            turn = r["turn_index"]
+            gen_ok = r["cypher_generated"]
+            status = "✅" if gen_ok else "❌"
+            latency = r.get("latency_s")
+            latency_str = f" · ⏱ {latency}s" if latency is not None else ""
+            exec_str = ""
+            if r.get("execution_tested"):
+                exec_str = " · EXPLAIN ✅" if r.get("executable") else " · EXPLAIN ❌"
+
+            lines.append(f"#### Turn {turn} [{r['difficulty']}] {status}{exec_str}{latency_str}")
+            lines.append(f"**Original:** {r['question']}")
+            lines.append("")
+
+            if r.get("rewritten"):
+                hint_ok = r.get("rewrite_hint_ok", True)
+                hint_flag = "" if hint_ok else " ⚠️ hint mismatch"
+                lines.append(f"> **Rewritten:** {r['rewritten_text']}{hint_flag}")
+                lines.append("")
+
+            cypher = (r.get("cypher") or "").strip()
+            if cypher:
+                lines.append("```cypher")
+                lines.append(cypher)
+                lines.append("```")
+            else:
+                lines.append("_No Cypher generated._")
+
+            if r.get("error"):
+                lines.append(f"> ⚠️ Error: `{r['error']}`")
+            if r.get("execution_error"):
+                lines.append(f"> ⚠️ EXPLAIN error: `{r['execution_error']}`")
+            if r.get("guardrail_reason"):
+                lines.append(f"> ⚠️ Guardrail: `{r['guardrail_reason']}`")
+            lines.append("")
+
+    return lines
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 3. Also update /ask endpoint in api/openai_compat.py (or websocket_server.py)
+#    to return rewritten_question so the HTTP eval path captures it.
+#    Add this field to the AskResponse and populate it from the "rewrite" event.
+# ─────────────────────────────────────────────────────────────────────────────
+
+ASK_ENDPOINT_PATCH = """
+# In your /ask endpoint, add rewritten_question to the response:
+
+class AskResponse(BaseModel):
+    question: str
+    cypher: str | None
+    answer: str
+    latency_s: float
+    rewritten_question: str | None = None   # ← add this
+
+@app.post("/ask")
+async def ask(req: AskRequest):
+    import time
+    t0 = time.perf_counter()
+    cypher = None
+    answer = ""
+    rewritten_question = None
+
+    async for chunk in stream_qa_response(
+        req.question,
+        conversation_id=getattr(req, "conversation_id", None),
+        use_cache=False,
+    ):
+        if chunk["type"] == "rewrite":
+            rewritten_question = chunk["data"]   # ← capture rewrite event
+        elif chunk["type"] == "cypher":
+            cypher = chunk["data"]
+        elif chunk["type"] == "token":
+            answer += chunk["data"]
+        elif chunk["type"] == "error":
+            raise HTTPException(status_code=500, detail=chunk["data"])
+
+    return AskResponse(
+        question=req.question,
+        cypher=cypher or "",
+        answer=answer,
+        latency_s=round(time.perf_counter() - t0, 3),
+        rewritten_question=rewritten_question,   # ← include it
+    )
+"""
