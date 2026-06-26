@@ -24,7 +24,7 @@ label_keywords:
   Patient:       ["patient", "patients", "cohort", "balance", "payor", "payer",
                   "self-pay", "self pay", "sapa", "bai", "propensity", "bad debt"]
   Visit:         ["visit", "encounter", "admission", "discharge", "modality",
-                  "mri", "ct", "ultrasound", "imaging", "radiology"]
+                  "mri", "ct", "ultrasound", "imaging", "radiology","provider", "referring", "rendering", "doctor", "physician", "npi"]
   Charge:        ["charge", "charges", "cpt", "hcpcs", "procedure", "billed",
                   "line", "outstanding", "balance", "write-off", "void"]
   Transaction:   ["payment", "transaction", "adjustment", "denial", "bad debt",
@@ -56,7 +56,7 @@ path_keywords:
   cross_practice_patient: ["multi-practice", "multiple practices", "same patient"]
   location_to_reviews:    ["review", "rating", "birdeye", "stars"]
   patient_full_balance:   ["balance", "outstanding", "owe", "total balance"]
-
+  campaign_calls: ["campaign", "outreach", "recovery", "contact rate", "calls before"]
 labels:
   # ── Patient ──────────────────────────────────────────────────────────────
   Patient:
@@ -203,7 +203,9 @@ labels:
       Birdeye reviews.
     properties:
       location_id:
-        description: "Unique location identifier (e.g. ESR01, RADM-MAIN)."
+        description: "Primary key. Use this for lookups — NOT location_code or site_id."
+      npi:
+        description: "May be null. Filter with: WHERE l.npi IS NOT NULL"
       location_name:
         description: "Human-readable site name."
       location_type:
@@ -221,8 +223,6 @@ labels:
         description: "State the location is in."
       zip:
         description: "ZIP code of the location."
-      npi:
-        description: "NPI for this specific site. May be null if not on file."
       phone:
         description: "Main contact phone for this location."
 
@@ -364,14 +364,14 @@ labels:
           reversal:   "Payment reversal or refund"
           denial:     "Payer denial"
       paysource:
-        description: "Who or what originated this payment."
+        description: "Payment source. Use this — NOT payment_type or processing_type."
         values:
-          patient:   "Patient payment (check, card, cash)"
+          ers: "Electronic remittance"
+          ivr: "IVR phone payment"
+          patient: "Patient direct payment"
           insurance: "Primary insurance remittance"
           secondary: "Secondary insurance remittance"
           tertiary:  "Tertiary insurance remittance"
-          ers:       "Electronic remittance (ERS / ERA)"
-          ivr:       "IVR self-service payment (pay-by-phone)"
           agency:    "Collection agency recovery"
           refund:    "Refund issued to patient"
           reversal:  "Payment reversal"
@@ -385,7 +385,7 @@ labels:
           refund_reversal:    "Refund or payment reversal"
           other:              "Other / uncategorized adjustment"
       denial_code:
-        description: "CARC denial reason code (e.g. CO45, PR1, CO96). Populated on denial transactions."
+        description: "CARC code as stored. Format: 'CO45', 'PR1', 'CO96' — always uppercase with prefix."
       denial_reason:
         description: "Human-readable denial reason mapped from denial_code."
       check_number:
@@ -757,8 +757,7 @@ relationships:
     description: "BirdeyeReview is posted about a Location."
     from: BirdeyeReview
     to: Location
-    example: "MATCH (br:BirdeyeReview)-[:REVIEWS]->(l:Location)"
-
+    example: "MATCH (br:BirdeyeReview)-[:REVIEWS]->(l:Location)"  
   RUN_BY:
     description: "Campaign is run by a Practice."
     from: Campaign
@@ -787,6 +786,18 @@ relationships:
 # that are non-obvious from the schema alone. These are the paths most
 # commonly needed for medium and hard questions.
 
+schema_notes:
+  provider: >
+    There is NO Provider node. Provider/referring doctor info is stored
+    as properties on Visit and Charge nodes:
+    v.rendering_provider_id, v.referring_provider_id, v.rendering_provider_name.
+    Use MATCH (v:Visit) WHERE v.referring_provider_id IS NOT NULL.
+  procedure_lookup: >
+    CPT codes are available TWO ways:
+    1. Inline on Charge: c.cpt_code (faster for filtering)
+    2. Via relationship: (c:Charge)-[:USES_PROCEDURE]->(pc:ProcedureCode)
+    Use inline c.cpt_code for simple filters. Use USES_PROCEDURE only when
+    you need pc.description or pc.modality.
 common_paths:
   patient_to_carrier: >
     MATCH (p:Patient)-[:HAD_VISIT]->(v:Visit)-[:UNDER_PLAN]->(ip:InsurancePlan)
@@ -803,16 +814,47 @@ common_paths:
     MATCH (c:Charge)<-[:SETTLES]-(t:Transaction) WHERE t.transaction_type = 'payment'
   charge_to_denial: >
     MATCH (c:Charge)<-[:SETTLES]-(t:Transaction) WHERE t.transaction_type = 'denial'
-  cross_practice_patient: >
-    MATCH (p1:Patient)-[:SAME_PERSON_AS]->(p2:Patient)
-    MATCH (p1)-[:HAD_VISIT]->(v1:Visit), (p2)-[:HAD_VISIT]->(v2:Visit)
   location_to_reviews: >
     MATCH (l:Location)<-[:REVIEWS]-(br:BirdeyeReview)
+  age_from_dob: >
+    // Patient age calculation — p.age does NOT exist, always compute from dob:
+    WITH duration.inDays(date(p.dob), date()).days / 365 AS age  
+  safe_month_compare: >
+    // Safe month-over-month — handles year boundary:
+    WHERE datetime(c.post_date) >= datetime() - duration({months: 1})
+    AND   datetime(c.post_date) <  datetime()  
+  ar_aging_days: >
+    // Days in A/R from service date to today:
+    WITH duration.inDays(date(c.service_date), date()).days AS days_in_ar  
+  time_series_monthly: >
+    // Monthly trend pattern:
+    WITH datetime(c.post_date).year AS yr, datetime(c.post_date).month AS mo
+    RETURN yr, mo, count(*) AS n ORDER BY yr, mo
   patient_full_balance: >
     MATCH (p:Patient)-[:HAS_CHARGE]->(c:Charge)
     WHERE c.balance > 0
     RETURN p.patientId, sum(c.balance) AS total_balance
-
+  campaign_calls: >
+    // Campaign call volume — direction is RCCall->Campaign not Campaign->RCCall:
+    MATCH (rc:RCCall)-[:PART_OF_CAMPAIGN]->(cam:Campaign)
+  campaign_recovery: >
+    MATCH (rc:RCCall)-[:PART_OF_CAMPAIGN]->(cam:Campaign)
+    MATCH (p:Patient)-[:IDENTIFIED_BY_PHONE]->(:PhoneBridge)<-[:ATTRIBUTED_TO_PHONE]-(rc)
+    MATCH (p)-[:HAS_TRANSACTION]->(t:Transaction)
+  cross_practice_patient: >
+    // If SAME_PERSON_AS exists: MATCH (p1:Patient)-[:SAME_PERSON_AS]->(p2:Patient)
+    // Fallback — use multi_practice_flag:
+    MATCH (p:Patient) WHERE p.multi_practice_flag = true
+  todays_summary: >
+    // "Today" = service_date = date():
+    MATCH (c:Charge) WHERE date(c.service_date) = date()
+  quarter_compare: >
+    // Current quarter vs last quarter:
+    WITH date() AS today
+    WITH today.year AS yr, ((today.month - 1) / 3) AS qtr
+    MATCH (c:Charge)
+    WHERE datetime(c.service_date).year = yr
+    AND   ((datetime(c.service_date).month - 1) / 3) = qtr
 
 # ── Allowed topic patterns ────────────────────────────────────────────────────
 # Used by guardrails/input.py to reject off-topic or jailbreak-style questions.
