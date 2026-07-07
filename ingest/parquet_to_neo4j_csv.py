@@ -48,7 +48,7 @@ neo4j-admin import ID spaces used:
 
 Usage:
     python parquet_to_neo4j_csv.py --data ./rp_dataset_synthetic --out ./neo4j_import
-    python parquet_to_neo4j_csv.py --data /home/siva/work/codebase/RP/generator/rp_synthetic_output --out ./neo4j_import
+    python parquet_to_neo4j_csv.py --data /home/siva/work/codebase/RP/generate/rp_synthetic_output --out ../../dockers/neo4j_import
 """
 
 import argparse
@@ -56,6 +56,7 @@ import logging
 import time
 from pathlib import Path
 
+from duckdb import df
 import pandas as pd
 
 logger = logging.getLogger(__name__)
@@ -105,6 +106,15 @@ def iid(src: pd.Series, plan_num: pd.Series) -> pd.Series:
 def write_csv(df: pd.DataFrame, path: Path, label: str, rows: int):
     df.to_csv(path, index=False)
     logger.info(f"  ✓ {path.name:<45} {rows:>10,} rows   [{label}]")
+
+
+def read_parquet(data_dir: Path, *candidates: str) -> pd.DataFrame:
+    """Read the first parquet file that exists from a list of candidate paths."""
+    for rel_path in candidates:
+        path = data_dir / rel_path
+        if path.exists():
+            return pd.read_parquet(path)
+    raise FileNotFoundError(f"None of the parquet files exist: {candidates}")
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -241,7 +251,7 @@ def export_locations(data_dir: Path, out_dir: Path):
 
 def export_insurance(data_dir: Path, out_dir: Path):
     logger.info("Exporting InsurancePlan nodes ...")
-    df = pd.read_parquet(data_dir / "02_dims/insurance.parquet")
+    df = read_parquet(data_dir, "02_dims/InsurancePlan.parquet", "02_dims/insurance.parquet")
 
     out = pd.DataFrame()
     out["insuranceId:ID(InsurancePlan)"] = iid(df["Source_Database_Code"], df["PlanNumber"])
@@ -271,7 +281,7 @@ def export_campaigns(data_dir: Path, out_dir: Path):
 
 def export_birdeye(data_dir: Path, out_dir: Path):
     logger.info("Exporting BirdeyeReview nodes ...")
-    df = pd.read_parquet(data_dir / "02_dims/birdeye.parquet")
+    df = read_parquet(data_dir, "02_dims/BirdeyeReview.parquet", "02_dims/birdeye.parquet")
     df = df.drop_duplicates(subset=["Location", "Date Posted On"], keep="last")
 
     # Composite ID: location::date (:: avoids collision with : in location names)
@@ -561,8 +571,8 @@ def export_rel_location_practice(data_dir: Path, out_dir: Path):
 
 
 def export_rel_insurance_practice(data_dir: Path, out_dir: Path):
-    df = pd.read_parquet(data_dir / "02_dims/insurance.parquet",
-                         columns=["Source_Database_Code","PlanNumber"])
+    df = read_parquet(data_dir, "02_dims/InsurancePlan.parquet", "02_dims/insurance.parquet")
+    df = df[["Source_Database_Code", "PlanNumber"]]
     out = pd.DataFrame()
     out[":START_ID(InsurancePlan)"] = iid(df["Source_Database_Code"], df["PlanNumber"])
     out[":END_ID(Practice)"]        = df["Source_Database_Code"]
@@ -581,7 +591,7 @@ def export_rel_campaign_practice(data_dir: Path, out_dir: Path):
 
 
 def export_rel_birdeye_location(data_dir: Path, out_dir: Path):
-    df = pd.read_parquet(data_dir / "02_dims/birdeye.parquet")
+    df = read_parquet(data_dir, "02_dims/BirdeyeReview.parquet", "02_dims/birdeye.parquet")
     df = df.drop_duplicates(subset=["Location", "Date Posted On"])
 
     bid = df["Location"].astype(str) + "::" + df["Date Posted On"].astype(str)
@@ -592,6 +602,9 @@ def export_rel_birdeye_location(data_dir: Path, out_dir: Path):
     loc["location_node_id"] = lid(loc["Source_Database_Code"], loc["LocationID"])
 
     merged = df.merge(loc, left_on="Location", right_on="LocationName", how="inner")
+    unmatched = len(df) - len(merged)
+    if unmatched:
+        logger.warning(f"  ⚠ {unmatched} BirdeyeReview rows had no matching Location name — regenerate dims together")
 
     out = pd.DataFrame()
     bid_matched = merged["Location"].astype(str) + "::" + merged["Date Posted On"].astype(str)

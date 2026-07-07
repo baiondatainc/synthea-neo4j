@@ -51,3 +51,13 @@ dockers/import/
 dockers/plugins/
 notebooks/neo4j_import/
 tests/eval/reports/
+
+lora_adapter_v1/
+lora_adapter_v2/
+lora_adapter_v3/
+lora_checkpoints/
+lora_smoke_test/
+gguf_export_v1/
+gguf_export_v1_gguf/
+runtime/
+unsloth_compiled_cache/

@@ -1,0 +1,1454 @@
+catalog:
+  generated_at: '2026-07-06T16:43:01.752955Z'
+  source: bolt://localhost:7687
+  version: '1.0'
+nodes:
+  ProcedureCode:
+    count: 36
+    labels: []
+    properties:
+      description:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      code:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      modality:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      procedureId:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+    relationships:
+    - type: USES_PROCEDURE
+      direction: out
+      target: unknown
+      count: 0
+  Visit:
+    count: 199948
+    labels: []
+    properties:
+      admit_date:
+        type: DATE_TIME
+        indexed: false
+        unique: false
+        existence: false
+      secondary_insurance_plan:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      source_db:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      discharge_date:
+        type: DATE_TIME
+        indexed: false
+        unique: false
+        existence: false
+      primary_insurance_plan:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      primary_policy_number:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      primary_auth_number:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      visit_number:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      location_id:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      visitId:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      primary_insurance_group:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      history_number:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      visit_id:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+    relationships:
+    - type: PERFORMED_AT
+      direction: out
+      target: unknown
+      count: 0
+    - type: HAD_VISIT
+      direction: out
+      target: unknown
+      count: 0
+    - type: UNDER_PLAN
+      direction: out
+      target: unknown
+      count: 0
+    - type: PART_OF_VISIT
+      direction: out
+      target: unknown
+      count: 0
+  Practice:
+    count: 44
+    labels: []
+    properties:
+      practiceId:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      code:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+    relationships:
+    - type: ISSUED_BY_PRACTICE
+      direction: out
+      target: unknown
+      count: 0
+    - type: BELONGS_TO_PRACTICE
+      direction: out
+      target: unknown
+      count: 0
+    - type: REGISTERED_AT
+      direction: out
+      target: unknown
+      count: 0
+    - type: RUN_BY
+      direction: out
+      target: unknown
+      count: 0
+  RCCall:
+    count: 5000
+    labels: []
+    properties:
+      pre_queue:
+        type: INTEGER
+        indexed: false
+        unique: false
+        existence: false
+      rccallId:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      in_queue:
+        type: INTEGER
+        indexed: false
+        unique: false
+        existence: false
+      agent_name:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      agent_time:
+        type: INTEGER
+        indexed: false
+        unique: false
+        existence: false
+      ani_norm:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      sla:
+        type: INTEGER
+        indexed: false
+        unique: false
+        existence: false
+      acw_time:
+        type: INTEGER
+        indexed: false
+        unique: false
+        existence: false
+      hold_time:
+        type: INTEGER
+        indexed: false
+        unique: false
+        existence: false
+      team_name:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      tags:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      campaign_name:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      abandon_time:
+        type: INTEGER
+        indexed: false
+        unique: false
+        existence: false
+      rc_attributable:
+        type: BOOLEAN
+        indexed: false
+        unique: false
+        existence: false
+      abandon:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      skill_name:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      disp_name:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      total_time:
+        type: INTEGER
+        indexed: false
+        unique: false
+        existence: false
+      start_date:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+    relationships:
+    - type: PART_OF_CAMPAIGN
+      direction: out
+      target: unknown
+      count: 0
+    - type: ATTRIBUTED_TO_PHONE
+      direction: out
+      target: unknown
+      count: 0
+  BirdeyeReview:
+    count: 404
+    labels: []
+    properties:
+      phi_phone:
+        type: INTEGER
+        indexed: false
+        unique: false
+        existence: false
+      date_posted:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      birdeyeId:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      rating:
+        type: INTEGER
+        indexed: false
+        unique: false
+        existence: false
+      phi_email:
+        type: INTEGER
+        indexed: false
+        unique: false
+        existence: false
+      location:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      comment:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      source:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      phi_flagged:
+        type: BOOLEAN
+        indexed: false
+        unique: false
+        existence: false
+    relationships:
+    - type: REVIEWS
+      direction: out
+      target: unknown
+      count: 0
+  PhoneBridge:
+    count: 65930
+    labels: []
+    properties:
+      campaigns_contacted:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      phone_type:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      source_db:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      patient_id:
+        type: INTEGER
+        indexed: false
+        unique: false
+        existence: false
+      phone_norm:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      campaign_count:
+        type: FLOAT
+        indexed: false
+        unique: false
+        existence: false
+      rc_call_count:
+        type: FLOAT
+        indexed: false
+        unique: false
+        existence: false
+      primary_campaign:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      phonebridgeId:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+    relationships:
+    - type: IDENTIFIED_BY_PHONE
+      direction: out
+      target: unknown
+      count: 0
+    - type: ATTRIBUTED_TO_PHONE
+      direction: out
+      target: unknown
+      count: 0
+  InsurancePlan:
+    count: 2000
+    labels: []
+    properties:
+      plan_type:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      source_db:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      insuranceId:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      plan_number:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      carrier_name:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      plan_name:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+    relationships:
+    - type: ISSUED_BY_PRACTICE
+      direction: out
+      target: unknown
+      count: 0
+    - type: UNDER_PLAN
+      direction: out
+      target: unknown
+      count: 0
+  Statement:
+    count: 142639
+    labels: []
+    properties:
+      patient_balance:
+        type: FLOAT
+        indexed: false
+        unique: false
+        existence: false
+      source_db:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      is_released:
+        type: INTEGER
+        indexed: false
+        unique: false
+        existence: false
+      email_successful:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      is_on_hold:
+        type: INTEGER
+        indexed: false
+        unique: false
+        existence: false
+      released_date:
+        type: DATE_TIME
+        indexed: false
+        unique: false
+        existence: false
+      total_balance:
+        type: FLOAT
+        indexed: false
+        unique: false
+        existence: false
+      statement_level:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      patient_id:
+        type: INTEGER
+        indexed: false
+        unique: false
+        existence: false
+      text_successful:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      statementId:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      created_date:
+        type: DATE_TIME
+        indexed: false
+        unique: false
+        existence: false
+    relationships:
+    - type: RECEIVED_STATEMENT
+      direction: out
+      target: unknown
+      count: 0
+  Charge:
+    count: 474607
+    labels: []
+    properties:
+      procedure_modality:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      charge_unit:
+        type: FLOAT
+        indexed: false
+        unique: false
+        existence: false
+      modifier:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      line_status:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      balance:
+        type: FLOAT
+        indexed: false
+        unique: false
+        existence: false
+      charge_id:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      service_date:
+        type: DATE_TIME
+        indexed: false
+        unique: false
+        existence: false
+      procedure_code:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      is_hold:
+        type: INTEGER
+        indexed: false
+        unique: false
+        existence: false
+      payment_plan_present:
+        type: BOOLEAN
+        indexed: false
+        unique: false
+        existence: false
+      current_responsible_level:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      source_db:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      icd10_4:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      icd10_5:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      icd10_2:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      icd10_3:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      icd10_1:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      transfer_flag:
+        type: INTEGER
+        indexed: false
+        unique: false
+        existence: false
+      procedure_description:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      post_date:
+        type: DATE_TIME
+        indexed: false
+        unique: false
+        existence: false
+      patient_id:
+        type: INTEGER
+        indexed: false
+        unique: false
+        existence: false
+      chargeId:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      dos_aging_bucket:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      is_voided:
+        type: INTEGER
+        indexed: false
+        unique: false
+        existence: false
+      visit_id:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      place_of_service:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      charge_amount:
+        type: FLOAT
+        indexed: false
+        unique: false
+        existence: false
+    relationships:
+    - type: SETTLES
+      direction: out
+      target: unknown
+      count: 0
+    - type: AT_LOCATION
+      direction: out
+      target: unknown
+      count: 0
+    - type: DIAGNOSED_WITH
+      direction: out
+      target: unknown
+      count: 0
+    - type: PART_OF_VISIT
+      direction: out
+      target: unknown
+      count: 0
+    - type: USES_PROCEDURE
+      direction: out
+      target: unknown
+      count: 0
+    - type: HAS_CHARGE
+      direction: out
+      target: unknown
+      count: 0
+  DiagnosisCode:
+    count: 39
+    labels: []
+    properties:
+      diagnosisId:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      code:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+    relationships:
+    - type: DIAGNOSED_WITH
+      direction: out
+      target: unknown
+      count: 0
+  Patient:
+    count: 50000
+    labels: []
+    properties:
+      multi_practice_flag:
+        type: BOOLEAN
+        indexed: false
+        unique: false
+        existence: false
+      call_tier:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      patientId:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      adj_contractual:
+        type: FLOAT
+        indexed: false
+        unique: false
+        existence: false
+      total_paid:
+        type: FLOAT
+        indexed: false
+        unique: false
+        existence: false
+      is_atlanta_404:
+        type: BOOLEAN
+        indexed: false
+        unique: false
+        existence: false
+      has_insurance:
+        type: BOOLEAN
+        indexed: false
+        unique: false
+        existence: false
+      state:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      has_any_calls:
+        type: BOOLEAN
+        indexed: false
+        unique: false
+        existence: false
+      payor_cohort:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      zip:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      visit_count:
+        type: FLOAT
+        indexed: false
+        unique: false
+        existence: false
+      practice_count:
+        type: INTEGER
+        indexed: false
+        unique: false
+        existence: false
+      bad_address_indicator:
+        type: FLOAT
+        indexed: false
+        unique: false
+        existence: false
+      is_tennessee:
+        type: BOOLEAN
+        indexed: false
+        unique: false
+        existence: false
+      is_sapa:
+        type: BOOLEAN
+        indexed: false
+        unique: false
+        existence: false
+      total_adjusted:
+        type: FLOAT
+        indexed: false
+        unique: false
+        existence: false
+      phone_norm:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      is_friction:
+        type: BOOLEAN
+        indexed: false
+        unique: false
+        existence: false
+      plan_name:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      adj_refund_reversal:
+        type: FLOAT
+        indexed: false
+        unique: false
+        existence: false
+      total_calls_window:
+        type: FLOAT
+        indexed: false
+        unique: false
+        existence: false
+      statement_count:
+        type: INTEGER
+        indexed: false
+        unique: false
+        existence: false
+      patient_id:
+        type: INTEGER
+        indexed: false
+        unique: false
+        existence: false
+      dob:
+        type: DATE_TIME
+        indexed: false
+        unique: false
+        existence: false
+      is_catastrophe:
+        type: BOOLEAN
+        indexed: false
+        unique: false
+        existence: false
+      active_window:
+        type: BOOLEAN
+        indexed: false
+        unique: false
+        existence: false
+      plan_type:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      is_nraa:
+        type: BOOLEAN
+        indexed: false
+        unique: false
+        existence: false
+      gender:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      ethnicity:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      city:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      propensity_desc:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      cell_norm:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      adj_bad_debt:
+        type: FLOAT
+        indexed: false
+        unique: false
+        existence: false
+      is_fully_covered:
+        type: BOOLEAN
+        indexed: false
+        unique: false
+        existence: false
+      outstanding_balance:
+        type: FLOAT
+        indexed: false
+        unique: false
+        existence: false
+      is_bai:
+        type: BOOLEAN
+        indexed: false
+        unique: false
+        existence: false
+      first_name:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      carrier_name:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      charge_count:
+        type: INTEGER
+        indexed: false
+        unique: false
+        existence: false
+      email:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      adj_other:
+        type: FLOAT
+        indexed: false
+        unique: false
+        existence: false
+      total_charged:
+        type: FLOAT
+        indexed: false
+        unique: false
+        existence: false
+      race:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      source_db:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      is_self_pay:
+        type: BOOLEAN
+        indexed: false
+        unique: false
+        existence: false
+      last_name:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      middle_name:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      propensity_grade:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      is_clean:
+        type: BOOLEAN
+        indexed: false
+        unique: false
+        existence: false
+      adj_collection_agency:
+        type: FLOAT
+        indexed: false
+        unique: false
+        existence: false
+    relationships:
+    - type: REGISTERED_AT
+      direction: out
+      target: unknown
+      count: 0
+    - type: CONTACTED_BY_DIALLER
+      direction: out
+      target: unknown
+      count: 0
+    - type: RECEIVED_STATEMENT
+      direction: out
+      target: unknown
+      count: 0
+    - type: CALLED_IVR
+      direction: out
+      target: unknown
+      count: 0
+    - type: IDENTIFIED_BY_PHONE
+      direction: out
+      target: unknown
+      count: 0
+    - type: HAS_TRANSACTION
+      direction: out
+      target: unknown
+      count: 0
+    - type: HAD_VISIT
+      direction: out
+      target: unknown
+      count: 0
+    - type: HAS_CHARGE
+      direction: out
+      target: unknown
+      count: 0
+  DiallerCall:
+    count: 150
+    labels: []
+    properties:
+      service_loc:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      account_id:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      diallerId:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      patient_balance:
+        type: FLOAT
+        indexed: false
+        unique: false
+        existence: false
+      result_desc:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      phone_norm:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      call_datetime:
+        type: DATE_TIME
+        indexed: false
+        unique: false
+        existence: false
+      account:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+    relationships:
+    - type: CONTACTED_BY_DIALLER
+      direction: out
+      target: unknown
+      count: 0
+  IVRInbound:
+    count: 400
+    labels: []
+    properties:
+      ivr_type:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      auth_success:
+        type: BOOLEAN
+        indexed: false
+        unique: false
+        existence: false
+      amount_paid:
+        type: FLOAT
+        indexed: false
+        unique: false
+        existence: false
+      account_id:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      balance:
+        type: FLOAT
+        indexed: false
+        unique: false
+        existence: false
+      response_id:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      result_desc:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      facility_code:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      call_datetime:
+        type: DATE_TIME
+        indexed: false
+        unique: false
+        existence: false
+      call_duration:
+        type: FLOAT
+        indexed: false
+        unique: false
+        existence: false
+      ivrId:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+    relationships:
+    - type: CALLED_IVR
+      direction: out
+      target: unknown
+      count: 0
+  Campaign:
+    count: 45
+    labels: []
+    properties:
+      name:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      notes:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      source_db:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      campaignId:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+    relationships:
+    - type: PART_OF_CAMPAIGN
+      direction: out
+      target: unknown
+      count: 0
+    - type: RUN_BY
+      direction: out
+      target: unknown
+      count: 0
+  Transaction:
+    count: 758534
+    labels: []
+    properties:
+      adjustment_bucket:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      allowed_amount:
+        type: FLOAT
+        indexed: false
+        unique: false
+        existence: false
+      denial_note:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      source_db:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      denial_code:
+        type: INTEGER
+        indexed: false
+        unique: false
+        existence: false
+      co_insurance_amount:
+        type: FLOAT
+        indexed: false
+        unique: false
+        existence: false
+      paysource:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      payment_amount:
+        type: FLOAT
+        indexed: false
+        unique: false
+        existence: false
+      adjustment_type:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      deductible_amount:
+        type: FLOAT
+        indexed: false
+        unique: false
+        existence: false
+      transaction_type:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      transactionId:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      transfer_flag:
+        type: INTEGER
+        indexed: false
+        unique: false
+        existence: false
+      days_to_agency:
+        type: FLOAT
+        indexed: false
+        unique: false
+        existence: false
+      payment_id:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      post_date:
+        type: DATE_TIME
+        indexed: false
+        unique: false
+        existence: false
+      charge_id:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      adjustment_amount:
+        type: FLOAT
+        indexed: false
+        unique: false
+        existence: false
+      bad_debt_adjustments:
+        type: FLOAT
+        indexed: false
+        unique: false
+        existence: false
+      balance_after_post:
+        type: FLOAT
+        indexed: false
+        unique: false
+        existence: false
+      co_pay_amount:
+        type: FLOAT
+        indexed: false
+        unique: false
+        existence: false
+      processing_type:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      payment_method:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+    relationships:
+    - type: HAS_TRANSACTION
+      direction: out
+      target: unknown
+      count: 0
+    - type: SETTLES
+      direction: out
+      target: unknown
+      count: 0
+  Location:
+    count: 300
+    labels: []
+    properties:
+      zip:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      address:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      birdeye_review_count:
+        type: FLOAT
+        indexed: false
+        unique: false
+        existence: false
+      city:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      source_db:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      npi:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      phone_norm:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      abbreviation:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      location_id:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      location_type:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      birdeye_one_star_pct:
+        type: FLOAT
+        indexed: false
+        unique: false
+        existence: false
+      locationId:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      fax_norm:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      name:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      birdeye_phi_review_count:
+        type: FLOAT
+        indexed: false
+        unique: false
+        existence: false
+      state:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      fda_number:
+        type: STRING
+        indexed: false
+        unique: false
+        existence: false
+      birdeye_avg_rating:
+        type: FLOAT
+        indexed: false
+        unique: false
+        existence: false
+    relationships:
+    - type: PERFORMED_AT
+      direction: out
+      target: unknown
+      count: 0
+    - type: REVIEWS
+      direction: out
+      target: unknown
+      count: 0
+    - type: BELONGS_TO_PRACTICE
+      direction: out
+      target: unknown
+      count: 0
+    - type: AT_LOCATION
+      direction: out
+      target: unknown
+      count: 0
+relationships:
+  PERFORMED_AT:
+    count: 199948
+    properties: {}
+  SETTLES:
+    count: 758534
+    properties:
+      bad_debt:
+        type: FLOAT
+      payment_amount:
+        type: FLOAT
+      adjustment_bucket:
+        type: STRING
+      balance_after_post:
+        type: FLOAT
+      adjustment_amount:
+        type: FLOAT
+  AT_LOCATION:
+    count: 474607
+    properties: {}
+  DIAGNOSED_WITH:
+    count: 829618
+    properties: {}
+  IDENTIFIED_BY_PHONE:
+    count: 65930
+    properties: {}
+  HAS_TRANSACTION:
+    count: 758534
+    properties:
+      bucket:
+        type: STRING
+      payment_amount:
+        type: FLOAT
+      adjustment_amount:
+        type: FLOAT
+  HAD_VISIT:
+    count: 199948
+    properties: {}
+  ISSUED_BY_PRACTICE:
+    count: 2000
+    properties: {}
+  BELONGS_TO_PRACTICE:
+    count: 300
+    properties: {}
+  ATTRIBUTED_TO_PHONE:
+    count: 2935
+    properties: {}
+  REVIEWS:
+    count: 404
+    properties: {}
+  REGISTERED_AT:
+    count: 50000
+    properties: {}
+  RUN_BY:
+    count: 43
+    properties: {}
+  PART_OF_CAMPAIGN:
+    count: 5000
+    properties: {}
+  CONTACTED_BY_DIALLER:
+    count: 150
+    properties:
+      result:
+        type: STRING
+      call_date:
+        type: DATE_TIME
+      patient_balance:
+        type: FLOAT
+  RECEIVED_STATEMENT:
+    count: 142639
+    properties:
+      total_balance:
+        type: FLOAT
+      patient_balance:
+        type: FLOAT
+      level:
+        type: STRING
+  CALLED_IVR:
+    count: 400
+    properties:
+      call_date:
+        type: DATE_TIME
+      amount_paid:
+        type: FLOAT
+      balance:
+        type: FLOAT
+  PART_OF_VISIT:
+    count: 474607
+    properties: {}
+  UNDER_PLAN:
+    count: 174553
+    properties:
+      plan_type:
+        type: STRING
+  USES_PROCEDURE:
+    count: 474607
+    properties: {}
+  HAS_CHARGE:
+    count: 474607
+    properties:
+      modality:
+        type: STRING
+      service_date:
+        type: DATE_TIME
+      charge_amount:
+        type: FLOAT

@@ -1,0 +1,206 @@
+# RP Knowledge Graph Schema — Source of Truth for All Prompts
+# This schema is the authoritative reference for Cypher query generation.
+# Keep in sync with Neo4j database constraints and indexes.
+
+nodes:
+  Patient:
+    description: "A unique patient in the healthcare system"
+    properties:
+      id: { type: string, description: "Patient ID (unique)" }
+      firstName: { type: string }
+      lastName: { type: string }
+      birthDate: { type: string, description: "ISO 8601 date" }
+      gender: { type: string, enum: ["M", "F"] }
+      maritalStatus: { type: string }
+      race: { type: string }
+      ethnicity: { type: string }
+      healthCareExpenses: { type: float, description: "Total annual healthcare expenses" }
+
+  Visit:
+    description: "An encounter/visit to a healthcare provider"
+    properties:
+      id: { type: string, unique: true }
+      date: { type: string, description: "ISO 8601 date" }
+      encounterClass: { type: string, enum: ["ambulatory", "emergency", "inpatient", "virtual", "home"] }
+      reasonForVisit: { type: string }
+      cost: { type: float, description: "Insurance claim amount for this visit" }
+
+  Provider:
+    description: "A healthcare provider (physician, nurse, specialist)"
+    properties:
+      id: { type: string, unique: true }
+      name: { type: string }
+      specialty: { type: string }
+      organization: { type: string }
+
+  Organization:
+    description: "Hospital, clinic, healthcare system"
+    properties:
+      id: { type: string, unique: true }
+      name: { type: string }
+      address: { type: string }
+      city: { type: string }
+      state: { type: string }
+      zip: { type: string }
+
+  Condition:
+    description: "A diagnosis or medical condition"
+    properties:
+      code: { type: string, description: "ICD-10 code" }
+      description: { type: string }
+      onsetDate: { type: string, description: "ISO 8601 date when condition started" }
+
+  Medication:
+    description: "A prescribed or administered medication"
+    properties:
+      code: { type: string }
+      description: { type: string }
+      startDate: { type: string }
+      stopDate: { type: string, nullable: true }
+
+  Procedure:
+    description: "A medical procedure or treatment"
+    properties:
+      code: { type: string }
+      description: { type: string }
+      date: { type: string }
+      cost: { type: float }
+
+  Observation:
+    description: "A clinical observation or lab result"
+    properties:
+      code: { type: string }
+      description: { type: string }
+      date: { type: string }
+      value: { type: string }
+      unit: { type: string }
+
+relationships:
+  HAS_VISIT:
+    from: Patient
+    to: Visit
+    properties:
+      count: { type: int, description: "Number of such visits" }
+    example: "(p:Patient)-[:HAS_VISIT]->(v:Visit)"
+    query_hint: "Find all visits for a patient"
+
+  VISITED_BY:
+    from: Visit
+    to: Patient
+    reverse_of: HAS_VISIT
+
+  AT_PROVIDER:
+    from: Visit
+    to: Provider
+    example: "(v:Visit)-[:AT_PROVIDER]->(pr:Provider)"
+    query_hint: "Find which provider handled a visit"
+
+  AT_ORGANIZATION:
+    from: Visit
+    to: Organization
+    example: "(v:Visit)-[:AT_ORGANIZATION]->(org:Organization)"
+
+  DIAGNOSED_WITH:
+    from: Patient
+    to: Condition
+    properties:
+      onsetDate: { type: string }
+      status: { type: string, enum: ["active", "inactive", "remission", "resolved"] }
+    example: "(p:Patient)-[:DIAGNOSED_WITH]->(c:Condition)"
+    query_hint: "Find all diagnoses for a patient; filter by date ranges with datetime() wrapping"
+
+  TREATED_WITH:
+    from: Visit
+    to: Medication
+    properties:
+      startDate: { type: string }
+      stopDate: { type: string, nullable: true }
+    example: "(v:Visit)-[:TREATED_WITH]->(m:Medication)"
+
+  PRESCRIBED_BY:
+    from: Medication
+    to: Provider
+    example: "(m:Medication)-[:PRESCRIBED_BY]->(pr:Provider)"
+
+  UNDERWENT:
+    from: Patient
+    to: Procedure
+    properties:
+      date: { type: string }
+    example: "(p:Patient)-[:UNDERWENT]->(proc:Procedure)"
+
+  HAD_OBSERVATION:
+    from: Visit
+    to: Observation
+    example: "(v:Visit)-[:HAD_OBSERVATION]->(obs:Observation)"
+
+  WORKS_AT:
+    from: Provider
+    to: Organization
+    example: "(pr:Provider)-[:WORKS_AT]->(org:Organization)"
+
+constraints_and_indexes:
+  - "CREATE CONSTRAINT patient_id IF NOT EXISTS FOR (p:Patient) REQUIRE p.id IS UNIQUE"
+  - "CREATE CONSTRAINT visit_id IF NOT EXISTS FOR (v:Visit) REQUIRE v.id IS UNIQUE"
+  - "CREATE CONSTRAINT provider_id IF NOT EXISTS FOR (pr:Provider) REQUIRE pr.id IS UNIQUE"
+  - "CREATE CONSTRAINT organization_id IF NOT EXISTS FOR (org:Organization) REQUIRE org.id IS UNIQUE"
+  - "CREATE CONSTRAINT condition_code IF NOT EXISTS FOR (c:Condition) REQUIRE c.code IS UNIQUE"
+  - "CREATE INDEX visit_date IF NOT EXISTS FOR (v:Visit) ON (v.date)"
+  - "CREATE INDEX condition_onset IF NOT EXISTS FOR (c:Condition) ON (c.onsetDate)"
+
+cypher_best_practices:
+  temporal: |
+    For quarter queries, use: 
+    WITH datetime('2024-Q1') AS q_start, datetime('2024-Q1') + duration('P3M') AS q_end
+    MATCH (v:Visit) WHERE v.date >= q_start AND v.date < q_end
+  
+  aggregation: |
+    Count visits per provider:
+    MATCH (v:Visit)-[:AT_PROVIDER]->(pr:Provider)
+    RETURN pr.name, COUNT(v) as visit_count
+    ORDER BY visit_count DESC
+  
+  multihop: |
+    For complex chains (e.g., patients → visits → procedures → costs):
+    MATCH (p:Patient)-[:HAS_VISIT]->(v:Visit)-[:UNDERWENT]->(proc:Procedure)
+    WHERE ... (filter on p, v, or proc)
+    RETURN p.firstName, v.date, proc.description, proc.cost
+  
+  row_limiting: |
+    Always limit for safety: MATCH ... RETURN ... LIMIT 100
+  
+  datetime_wrapping: |
+    INCORRECT: WHERE c.onsetDate > '2024-01-01'
+    CORRECT: WHERE datetime(c.onsetDate) > datetime('2024-01-01')
+
+sample_weak_categories:
+  - name: "Contact Center Operations"
+    focus: "PhoneBridge relationships, multi-hop call attribution"
+    example_question: "Which patients were called by the dialler campaign last month?"
+    example_cypher: |
+      MATCH (c:Campaign)<-[:PART_OF]-(d:DiallerCall)-[:CONTACTED]->(p:Patient)
+      WHERE d.date >= datetime('2024-06-01') AND d.date < datetime('2024-07-01')
+      RETURN p.id, p.firstName, d.date, COUNT(*) as call_count
+      LIMIT 100
+
+  - name: "Provider & Referral Patterns"
+    focus: "Provider info is on Visit/Charge, not as separate entity; common hallucination"
+    example_question: "What is the referral pattern between provider specialties?"
+    example_cypher: |
+      MATCH (v1:Visit)-[:AT_PROVIDER]->(pr1:Provider), 
+            (pr1)-[:WORKS_AT]->(org:Organization),
+            (v2:Visit)-[:AT_PROVIDER]->(pr2:Provider)
+      WHERE pr1.specialty <> pr2.specialty
+      RETURN pr1.specialty, pr2.specialty, COUNT(DISTINCT v1) as referrals
+      LIMIT 100
+
+  - name: "Executive / KPI Dashboard"
+    focus: "Multi-hop rollups, date-bucketed aggregations, cost summaries"
+    example_question: "What are total insurance costs by provider specialty for Q2 2024?"
+    example_cypher: |
+      MATCH (v:Visit)-[:AT_PROVIDER]->(pr:Provider)
+      WHERE datetime(v.date) >= datetime('2024-Q2') 
+        AND datetime(v.date) < datetime('2024-Q2') + duration('P3M')
+      RETURN pr.specialty, SUM(v.cost) as total_cost, COUNT(*) as visit_count
+      ORDER BY total_cost DESC
+      LIMIT 100
