@@ -2,10 +2,13 @@
 LangChain RAG pipeline with streaming and result extraction for charting.
 
 Architecture:
-  input guardrail → cypher_llm (text2cypher) → cypher guardrail (read-only,
-  schema, row cap) → Neo4j → output redaction → qa_llm → streamed answer
+  input guardrail → cypher_llm (text2cypher) → autofix → cypher guardrail
+  (read-only, schema, row cap) → Neo4j → output redaction → qa_llm → streamed answer
 
 Changes in this version:
+  - cypher_autofix applied in GuardedNeo4jGraph.query() BEFORE guardrail check
+    so SQL date functions, GROUP BY, greater_than() etc. are corrected silently
+    instead of being rejected and surfaced to the user.
   - Phase F: memory persist runs unconditionally (not gated on steps existing)
     so the transcript is always written to Redis, even on 0-row results.
   - Phase F: INFO-level logs so transcript writes are visible at default log level.
@@ -28,6 +31,7 @@ from graph.schema_text import GRAPH_SCHEMA
 from qa.llm import get_llm
 from metadata.catalog import get_catalog
 from guardrails import check_input, check_cypher, redact_rows, redact_text
+from qa.cypher_autofix import autofix_cypher
 from memory import (
     get_session_store,
     get_focus_store,
@@ -75,18 +79,35 @@ class GuardrailBlocked(Exception):
 class GuardedNeo4jGraph(Neo4jGraph):
     def query(self, query: str, params: dict | None = None) -> list[dict]:
         settings = get_settings()
+
+        # ── Auto-fix common model errors BEFORE guardrail sees the query ──
+        # Fixes: year(x), month(x), quarter(x), date_trunc(), GROUP BY,
+        #        substring() on DateTime, greater_than(), fake source_db values,
+        #        ORDER BY on variables consumed by prior WITH aggregation.
+        if settings.guardrails_enabled:
+            original_query = query
+            query = autofix_cypher(query, logger)
+            if query != original_query:
+                logger.info(f"autofix applied — query patched before guardrail")
+
+        # ── Guardrail: read-only, schema, row cap ─────────────────────────
         if settings.guardrails_enabled:
             check = check_cypher(query)
             if not check.ok:
-                logger.warning(f"Cypher guardrail blocked: {check.reason}\nQuery: {query[:300]}")
+                logger.warning(
+                    f"Cypher guardrail blocked: {check.reason}\nQuery: {query[:300]}"
+                )
                 raise GuardrailBlocked(check.reason)
             query = check.payload
+
         try:
             rows = super().query(query, params)
         except Exception:
             raise
+
         if settings.guardrails_enabled and settings.guardrails_redact_output:
             rows = redact_rows(rows)
+
         return rows
 
 
@@ -269,7 +290,6 @@ async def stream_qa_response(
     session_store = get_session_store() if conversation_id else None
     focus_store = get_focus_store() if conversation_id else None
 
-    # Always log Phase B entry so we can confirm wiring is correct.
     logger.info(
         f"Phase B: conv_id={conversation_id!r} "
         f"memory_enabled={settings.memory_enabled} "
@@ -305,7 +325,10 @@ async def stream_qa_response(
         if cached:
             timings["cache_lookup"] = time.monotonic() - t_cache
             timings["total"] = time.monotonic() - t_start
-            logger.info(f"Answer cache HIT — key={cache_key}, total={int(timings['total'] * 1000)}ms")
+            logger.info(
+                f"Answer cache HIT — key={cache_key}, "
+                f"total={int(timings['total'] * 1000)}ms"
+            )
             yield {"type": "cache_hit", "data": cache_key}
             yield {"type": "token", "data": cached.get("answer", "")}
             yield {"type": "cypher", "data": cached.get("cypher", ""), "results": cached.get("results", [])}
@@ -319,7 +342,9 @@ async def stream_qa_response(
                         new_focus = extract_entity_ids(cached["results"])
                         if new_focus:
                             focus_store.set(conversation_id, new_focus)
-                    logger.info(f"Phase C cache-hit: transcript written for conv_id={conversation_id!r}")
+                    logger.info(
+                        f"Phase C cache-hit: transcript written for conv_id={conversation_id!r}"
+                    )
                 except Exception as e:
                     logger.warning(f"Memory persist on cache hit failed: {e}")
             return
@@ -359,9 +384,19 @@ async def stream_qa_response(
                     new_focus = extract_entity_ids(hybrid_results)
                     if new_focus:
                         focus_store.set(conversation_id, new_focus)
-                logger.info(f"Phase D hybrid: transcript written for conv_id={conversation_id!r}")
+                logger.info(
+                    f"Phase D hybrid: transcript written for conv_id={conversation_id!r}"
+                )
             if cache is not None and cache_key and answer_text and hybrid_results:
-                cache.set(cache_key, {"question": question, "cypher": hybrid_cypher, "results": hybrid_results, "answer": answer_text})
+                cache.set(
+                    cache_key,
+                    {
+                        "question": question,
+                        "cypher": hybrid_cypher,
+                        "results": hybrid_results,
+                        "answer": answer_text,
+                    },
+                )
                 logger.info(f"Answer cache SET (hybrid): {cache_key}")
         except Exception as e:
             logger.warning(f"Hybrid post-success persist failed: {e}")
@@ -393,13 +428,19 @@ async def stream_qa_response(
         except GuardrailBlocked as e:
             logger.info(f"Cypher guardrail rejected: {e}")
             chain_result["finished"] = True
-            await queue.put({"type": "blocked", "data": f"The generated Cypher was rejected: {e}. Try rephrasing."})
+            await queue.put({
+                "type": "blocked",
+                "data": f"The generated Cypher was rejected: {e}. Try rephrasing.",
+            })
             await queue.put({"type": "end", "data": ""})
         except Exception as e:
             logger.error(f"Chain error: {e}", exc_info=True)
             error_msg = str(e)
             if "SyntaxError" in error_msg or "GqlError" in error_msg:
-                error_msg = f"The query generator produced invalid Cypher. Try rephrasing.\n\nDetails: {error_msg[:300]}"
+                error_msg = (
+                    f"The query generator produced invalid Cypher. "
+                    f"Try rephrasing.\n\nDetails: {error_msg[:300]}"
+                )
             await queue.put({"type": "error", "data": error_msg})
 
     task = asyncio.create_task(run_chain())
@@ -442,7 +483,6 @@ async def stream_qa_response(
             if answer_text:
                 session_store.append_assistant(conversation_id, answer_text)
                 logger.info(f"Phase F: assistant turn written — {len(answer_text)} chars")
-            # Focus only updates when rows came back.
             if results:
                 new_focus = extract_entity_ids(results)
                 if new_focus:
@@ -458,13 +498,22 @@ async def stream_qa_response(
 
         # Cache — only on real answer + valid Cypher.
         if cache is not None and cache_key and answer_text and cypher:
-            cache.set(cache_key, {"question": question, "cypher": cypher, "results": results, "answer": answer_text})
+            cache.set(
+                cache_key,
+                {
+                    "question": question,
+                    "cypher": cypher,
+                    "results": results,
+                    "answer": answer_text,
+                },
+            )
             logger.info(f"Answer cache SET: {cache_key}")
         else:
             logger.info(
                 f"Phase F: cache SET skipped — "
                 f"cache={cache is not None} key={bool(cache_key)} "
-                f"answer={bool(answer_text)}({len(answer_text)}chars) cypher={bool(cypher)}"
+                f"answer={bool(answer_text)}({len(answer_text)}chars) "
+                f"cypher={bool(cypher)}"
             )
 
     except Exception as e:

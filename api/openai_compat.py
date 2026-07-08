@@ -188,109 +188,107 @@ def build_artifact(chart: dict) -> str:
 
     if ctype == "bar":
         jsx = f"""import {{ BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell }} from 'recharts';
+        const data = {data_json};
+        const COLORS = ['#63b3ed','#68d391','#f6ad55','#fc8181','#b794f4','#76e4f7'];
 
-    const data = {data_json};
-    const COLORS = ['#63b3ed','#68d391','#f6ad55','#fc8181','#b794f4','#76e4f7'];
-
-    export default function Chart() {{
-    return (
-        <div style={{{{padding:'20px', background:'#1a1d2e', borderRadius:'12px', color:'#e2e8f0'}}}}>
-        <h3 style={{{{marginBottom:'16px', fontSize:'15px', color:'#e2e8f0'}}}}>{title}</h3>
-        <ResponsiveContainer width="100%" height={{380}}>
-            <BarChart data={{data}} margin={{{{top:5, right:20, left:10, bottom:100}}}}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#2d3748" />
-            <XAxis dataKey="{x}" tick={{{{fill:'#a0aec0', fontSize:11}}}} angle={{-40}} textAnchor="end" interval={{0}} />
-            <YAxis tick={{{{fill:'#a0aec0', fontSize:12}}}} />
-            <Tooltip contentStyle={{{{background:'#2d3748', border:'none', color:'#e2e8f0', borderRadius:'8px'}}}} />
-            <Bar dataKey="{y}" radius={{[4,4,0,0]}}>
-                {{data.map((_, i) => <Cell key={{i}} fill={{COLORS[i % COLORS.length]}} />)}}
-            </Bar>
-            </BarChart>
-        </ResponsiveContainer>
-        </div>
+        export default function Chart() {{
+        return (
+            <div style={{{{padding:'20px', background:'#1a1d2e', borderRadius:'12px', color:'#e2e8f0'}}}}>
+            <h3 style={{{{marginBottom:'16px', fontSize:'15px', color:'#e2e8f0'}}}}>{title}</h3>
+            <ResponsiveContainer width="100%" height={{380}}>
+                <BarChart data={{data}} margin={{{{top:5, right:20, left:10, bottom:100}}}}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#2d3748" />
+                <XAxis dataKey="{x}" tick={{{{fill:'#a0aec0', fontSize:11}}}} angle={{-40}} textAnchor="end" interval={{0}} />
+                <YAxis tick={{{{fill:'#a0aec0', fontSize:12}}}} />
+                <Tooltip contentStyle={{{{background:'#2d3748', border:'none', color:'#e2e8f0', borderRadius:'8px'}}}} />
+                <Bar dataKey="{y}" radius={{[4,4,0,0]}}>
+                    {{data.map((_, i) => <Cell key={{i}} fill={{COLORS[i % COLORS.length]}} />)}}
+                </Bar>
+                </BarChart>
+            </ResponsiveContainer>
+            </div>
     );
     }}"""
+    elif ctype == "pie":
+        jsx = f"""import {{ PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer }} from 'recharts';
 
-        elif ctype == "pie":
-            jsx = f"""import {{ PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer }} from 'recharts';
+        const data = {data_json};
+        const COLORS = ['#63b3ed','#68d391','#f6ad55','#fc8181','#b794f4','#76e4f7','#fbb6ce','#90cdf4'];
 
-    const data = {data_json};
-    const COLORS = ['#63b3ed','#68d391','#f6ad55','#fc8181','#b794f4','#76e4f7','#fbb6ce','#90cdf4'];
+        export default function Chart() {{
+        return (
+            <div style={{{{padding:'20px', background:'#1a1d2e', borderRadius:'12px', color:'#e2e8f0'}}}}>
+            <h3 style={{{{marginBottom:'16px', fontSize:'15px', color:'#e2e8f0'}}}}>{title}</h3>
+            <ResponsiveContainer width="100%" height={{380}}>
+                <PieChart>
+                <Pie data={{data}} dataKey="{y}" nameKey="{x}" cx="50%" cy="50%" outerRadius={{130}}
+                    label={{({{name, percent}}) => name + ' ' + (percent*100).toFixed(0) + '%'}}
+                    labelLine={{true}}>
+                    {{data.map((_, i) => <Cell key={{i}} fill={{COLORS[i % COLORS.length]}} />)}}
+                </Pie>
+                <Tooltip contentStyle={{{{background:'#2d3748', border:'none', color:'#e2e8f0', borderRadius:'8px'}}}} />
+                <Legend wrapperStyle={{{{color:'#a0aec0'}}}} />
+                </PieChart>
+            </ResponsiveContainer>
+            </div>
+        );
+        }}"""
 
-    export default function Chart() {{
-    return (
-        <div style={{{{padding:'20px', background:'#1a1d2e', borderRadius:'12px', color:'#e2e8f0'}}}}>
-        <h3 style={{{{marginBottom:'16px', fontSize:'15px', color:'#e2e8f0'}}}}>{title}</h3>
-        <ResponsiveContainer width="100%" height={{380}}>
-            <PieChart>
-            <Pie data={{data}} dataKey="{y}" nameKey="{x}" cx="50%" cy="50%" outerRadius={{130}}
-                label={{({{name, percent}}) => name + ' ' + (percent*100).toFixed(0) + '%'}}
-                labelLine={{true}}>
-                {{data.map((_, i) => <Cell key={{i}} fill={{COLORS[i % COLORS.length]}} />)}}
-            </Pie>
-            <Tooltip contentStyle={{{{background:'#2d3748', border:'none', color:'#e2e8f0', borderRadius:'8px'}}}} />
-            <Legend wrapperStyle={{{{color:'#a0aec0'}}}} />
-            </PieChart>
-        </ResponsiveContainer>
-        </div>
-    );
-    }}"""
-
-        elif ctype == "line":
+    elif ctype == "line":
             jsx = f"""import {{ AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer }} from 'recharts';
 
-    const data = {data_json};
+        const data = {data_json};
 
-    export default function Chart() {{
-    return (
-        <div style={{{{padding:'20px', background:'#1a1d2e', borderRadius:'12px', color:'#e2e8f0'}}}}>
-        <h3 style={{{{marginBottom:'16px', fontSize:'15px', color:'#e2e8f0'}}}}>{title}</h3>
-        <ResponsiveContainer width="100%" height={{380}}>
-            <AreaChart data={{data}} margin={{{{top:10, right:20, left:10, bottom:60}}}}>
-            <defs>
-                <linearGradient id="colorVal" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#63b3ed" stopOpacity={{0.3}} />
-                <stop offset="95%" stopColor="#63b3ed" stopOpacity={{0}} />
-                </linearGradient>
-            </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="#2d3748" />
-            <XAxis dataKey="{x}" tick={{{{fill:'#a0aec0', fontSize:11}}}} angle={{-35}} textAnchor="end" interval={{0}} />
-            <YAxis tick={{{{fill:'#a0aec0', fontSize:12}}}} />
-            <Tooltip contentStyle={{{{background:'#2d3748', border:'none', color:'#e2e8f0', borderRadius:'8px'}}}} />
-            <Area type="monotone" dataKey="{y}" stroke="#63b3ed" strokeWidth={{2}}
-                fill="url(#colorVal)" dot={{{{r:4, fill:'#63b3ed', stroke:'#1a1d2e', strokeWidth:2}}}} />
-            </AreaChart>
-        </ResponsiveContainer>
-        </div>
-    );
-    }}"""
+        export default function Chart() {{
+        return (
+            <div style={{{{padding:'20px', background:'#1a1d2e', borderRadius:'12px', color:'#e2e8f0'}}}}>
+            <h3 style={{{{marginBottom:'16px', fontSize:'15px', color:'#e2e8f0'}}}}>{title}</h3>
+            <ResponsiveContainer width="100%" height={{380}}>
+                <AreaChart data={{data}} margin={{{{top:10, right:20, left:10, bottom:60}}}}>
+                <defs>
+                    <linearGradient id="colorVal" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#63b3ed" stopOpacity={{0.3}} />
+                    <stop offset="95%" stopColor="#63b3ed" stopOpacity={{0}} />
+                    </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#2d3748" />
+                <XAxis dataKey="{x}" tick={{{{fill:'#a0aec0', fontSize:11}}}} angle={{-35}} textAnchor="end" interval={{0}} />
+                <YAxis tick={{{{fill:'#a0aec0', fontSize:12}}}} />
+                <Tooltip contentStyle={{{{background:'#2d3748', border:'none', color:'#e2e8f0', borderRadius:'8px'}}}} />
+                <Area type="monotone" dataKey="{y}" stroke="#63b3ed" strokeWidth={{2}}
+                    fill="url(#colorVal)" dot={{{{r:4, fill:'#63b3ed', stroke:'#1a1d2e', strokeWidth:2}}}} />
+                </AreaChart>
+            </ResponsiveContainer>
+            </div>
+        );
+        }}"""
 
-        else:
+    else:
             # Unknown chart type — fall back to bar rather than crash
             logger.warning(f"build_artifact: unknown chart type '{ctype}' — falling back to bar")
             jsx = f"""import {{ BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell }} from 'recharts';
 
-    const data = {data_json};
-    const COLORS = ['#63b3ed','#68d391','#f6ad55','#fc8181','#b794f4','#76e4f7'];
+            const data = {data_json};
+            const COLORS = ['#63b3ed','#68d391','#f6ad55','#fc8181','#b794f4','#76e4f7'];
 
-    export default function Chart() {{
-    return (
-        <div style={{{{padding:'20px', background:'#1a1d2e', borderRadius:'12px', color:'#e2e8f0'}}}}>
-        <h3 style={{{{marginBottom:'16px', fontSize:'15px', color:'#e2e8f0'}}}}>{title}</h3>
-        <ResponsiveContainer width="100%" height={{380}}>
-            <BarChart data={{data}} margin={{{{top:5, right:20, left:10, bottom:100}}}}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#2d3748" />
-            <XAxis dataKey="{x}" tick={{{{fill:'#a0aec0', fontSize:11}}}} angle={{-40}} textAnchor="end" interval={{0}} />
-            <YAxis tick={{{{fill:'#a0aec0', fontSize:12}}}} />
-            <Tooltip contentStyle={{{{background:'#2d3748', border:'none', color:'#e2e8f0', borderRadius:'8px'}}}} />
-            <Bar dataKey="{y}" radius={{[4,4,0,0]}}>
-                {{data.map((_, i) => <Cell key={{i}} fill={{COLORS[i % COLORS.length]}} />)}}
-            </Bar>
-            </BarChart>
-        </ResponsiveContainer>
-        </div>
-    );
-    }}"""
+            export default function Chart() {{
+            return (
+                <div style={{{{padding:'20px', background:'#1a1d2e', borderRadius:'12px', color:'#e2e8f0'}}}}>
+                <h3 style={{{{marginBottom:'16px', fontSize:'15px', color:'#e2e8f0'}}}}>{title}</h3>
+                <ResponsiveContainer width="100%" height={{380}}>
+                    <BarChart data={{data}} margin={{{{top:5, right:20, left:10, bottom:100}}}}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#2d3748" />
+                    <XAxis dataKey="{x}" tick={{{{fill:'#a0aec0', fontSize:11}}}} angle={{-40}} textAnchor="end" interval={{0}} />
+                    <YAxis tick={{{{fill:'#a0aec0', fontSize:12}}}} />
+                    <Tooltip contentStyle={{{{background:'#2d3748', border:'none', color:'#e2e8f0', borderRadius:'8px'}}}} />
+                    <Bar dataKey="{y}" radius={{[4,4,0,0]}}>
+                        {{data.map((_, i) => <Cell key={{i}} fill={{COLORS[i % COLORS.length]}} />)}}
+                    </Bar>
+                    </BarChart>
+                </ResponsiveContainer>
+                </div>
+            );
+            }}"""
 
     # Safety guard — should never be empty after the blocks above
     if not jsx.strip():

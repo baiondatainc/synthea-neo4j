@@ -15,6 +15,8 @@ Usage:
   python main.py warm data/faqs/    # pre-populate answer cache from FAQ files
   python main.py warm data/faqs/patient.txt data/faqs/birdeye_review.txt
   python main.py ask "question"     # one-off question (no streaming)
+  python main.py clearcache         # wipe the answer cache (all entries)
+  python main.py clearcache "Annual payment trend"  # delete one specific entry
 """
 import sys
 import logging
@@ -30,8 +32,6 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
-
-
 
 
 def cmd_serve():
@@ -130,6 +130,45 @@ def cmd_vectorize(force: bool = False, limit: int = 1_000_000):
     print(f"\n✓ Vectorize complete: {summary}\n")
 
 
+def cmd_clearcache(question: str | None = None):
+    """
+    Wipe the answer cache.
+
+    No argument  → deletes ALL cached entries.
+    With question → deletes only that specific question's cache entry.
+
+    Use after:
+      - Rebuilding the ollama model (Modelfile changes)
+      - Re-ingesting Neo4j data
+      - Fixing a bad cached answer
+    """
+    from cache import get_answer_cache
+    cache = get_answer_cache()
+
+    if question:
+        # ── Delete single entry ───────────────────────────────────────
+        deleted = cache.delete(question)
+        if deleted:
+            print(f"\n✓ Cache entry deleted for: {question!r}\n")
+        else:
+            print(f"\n⚠ No cache entry found for: {question!r}\n")
+    else:
+        # ── Delete all entries ────────────────────────────────────────
+        # Show count before wiping so the user knows what was cleared
+        try:
+            total = cache.size()          # implement size() if not present
+        except AttributeError:
+            total = "unknown number of"
+
+        confirm = input(f"\n⚠ This will delete {total} cached answer(s). Continue? [y/N] ").strip().lower()
+        if confirm != "y":
+            print("Aborted.\n")
+            return
+
+        deleted = cache.clear_all()
+        print(f"\n✓ Cache cleared — {deleted} entry/entries removed.\n")
+
+
 async def cmd_warm(paths: list[str]):
     """Pre-populate the answer cache from one or more FAQ files.
 
@@ -139,7 +178,7 @@ async def cmd_warm(paths: list[str]):
     Re-runnable: questions already in the cache report as 'cached' and don't
     re-hit the LLM. Errored questions don't block the rest of the run.
     """
-    
+
     files: list[Path] = []
     for p in paths:
         path = Path(p)
@@ -237,6 +276,10 @@ def main():
                 except ValueError:
                     pass
         cmd_vectorize(force=force, limit=limit)
+    elif args[0] == "clearcache":
+        # Optional: pass a specific question to delete just that entry
+        question = " ".join(args[1:]) if len(args) > 1 else None
+        cmd_clearcache(question)
     elif args[0] == "warm" and len(args) > 1:
         asyncio.run(cmd_warm(args[1:]))
     elif args[0] == "ask" and len(args) > 1:
