@@ -115,19 +115,40 @@ def detect_aggregate_summary(question: str) -> dict | None:
     if not (has_agg_trigger or has_summary_intent):
         return None
 
+    # ── Intent words that look like IDs but are NOT ──────────────────────
+    _INTENT_WORDS = {
+        "overview", "summary", "profile", "report", "breakdown", "details",
+        "information", "analysis", "data", "insight", "performance",
+        "statistics", "stats", "metrics", "all", "complete", "full",
+    }
+
     # ── 2. Label keyword match ────────────────────────────────────────────
     for keyword, label in _LABEL_MAP.items():
         if re.search(rf'\b{re.escape(keyword)}\b', q_lower):
-            # Guard: specific ID present → let single-node summarizer handle it
-            # e.g. "summarize patient 12345" should NOT match here
+            # Guard: only defer to single-node summarizer if a REAL ID follows
+            # Real IDs contain digits (12345, P-98765) OR are all-uppercase (RADM)
+            # Plain English words like "overview", "summary" must NOT trigger this guard
             id_after = re.compile(
-                rf'\b{re.escape(keyword)}\b\s+(?:for\s+|of\s+)?([A-Z0-9]{{4,}})',
+                rf'\b{re.escape(keyword)}\b\s+(?:for\s+|of\s+)?([A-Za-z0-9][A-Za-z0-9\-:_]{{3,}})',
                 re.IGNORECASE,
             )
-            if id_after.search(question):
+            m = id_after.search(question)
+            is_real_id = False
+            if m:
+                candidate = m.group(1)
+                if candidate.lower() not in _INTENT_WORDS:
+                    # Contains digit → real ID (e.g. 12345, P-98765, RADM:1000000)
+                    # Contains colon or dash with digits → composite ID (e.g. RADM:1000000)
+                    # Pure uppercase short codes (≤6 chars) like RADM, SMED, TRI are
+                    # ambiguous — require digits to confirm they are IDs not location names
+                    has_digit = bool(re.search(r'\d', candidate))
+                    has_colon = ':'  in candidate
+                    if has_digit or has_colon:
+                        is_real_id = True
+            if is_real_id:
                 logger.info(
-                    f"detect_aggregate_summary: label={label} but specific ID found "
-                    f"→ deferring to single-node summarizer"
+                    f"detect_aggregate_summary: label={label} but specific ID "
+                    f"'{m.group(1)}' found → deferring to single-node summarizer"
                 )
                 return None
             logger.info(f"detect_aggregate_summary: keyword={keyword!r} → label={label}")
@@ -511,17 +532,30 @@ Report each count as a number. Never say "no instances" unless the count is 0.
 Data:
 {context}
 
-Include:
-- Total patient count and financial overview (charged, paid, outstanding, bad debt)
-- Patient breakdown by state (top 10) with outstanding balances
-- Payor cohort distribution with outstanding balances
-- Call tier breakdown
-- Gender split
-- Key flags with actual counts: self-pay vs insured, BAI, catastrophe, friction, clean, bad address
-- Self-pay rate and bad address rate percentages
-- Notable insights and risk areas
+Structure your response with these sections:
 
-Use bullet points and section headers. Be concise but comprehensive.
+## Portfolio Overview
+Bullet points: total patients, total charged, total paid, collection rate, outstanding balance, bad debt, avg outstanding per patient.
+
+## Patient Flags
+Bullet points with counts and percentages: self-pay, insured, BAI, catastrophe, friction, clean, has calls, bad address, multi-practice.
+
+## Patients by State
+Markdown table with columns: State | Patients | Outstanding Balance
+Show top 10 states.
+
+## Patients by Payor Cohort
+Markdown table with columns: Cohort | Patients | Outstanding Balance
+Show all cohorts.
+
+## Call Tier Breakdown
+Markdown table with columns: Call Tier | Patient Count
+
+## Gender Split
+Markdown table with columns: Gender | Count
+
+## Notable Insights
+3-5 bullet points on key risks, concentration areas, and recommendations.
 
 Summary:""",
 
@@ -530,14 +564,23 @@ Summary:""",
 Data:
 {context}
 
-Include:
-- Total location count
-- Top locations by visit volume
-- Top locations by patient count
-- Birdeye review performance (overall rating, best and worst locations)
-- Notable insights
+Structure your response with these sections:
 
-Use bullet points and section headers.
+## Location Overview
+Bullet points: total location count, overall Birdeye avg rating, total reviews.
+
+## Top Locations by Visit Volume
+Markdown table with columns: Location | Visit Count
+
+## Top Locations by Patient Count
+Markdown table with columns: Location | Patient Count
+
+## Birdeye Review Performance
+Markdown table with columns: Location | Reviews | Avg Rating
+Show top 10 locations by review count.
+
+## Notable Insights
+3-5 bullet points on best/worst performing locations.
 
 Summary:""",
 
@@ -546,13 +589,16 @@ Summary:""",
 Data:
 {context}
 
-Include:
-- Total campaigns and overall call volume
-- Average call time and abandonment rate
-- Top campaigns by call count
-- Notable insights or underperforming campaigns
+Structure your response with these sections:
 
-Use bullet points and section headers.
+## Campaign Overview
+Bullet points: total campaigns, total calls, avg call time, total abandoned, abandonment rate %.
+
+## Top Campaigns by Call Volume
+Markdown table with columns: Campaign | Total Calls | Avg Call Time (s) | Abandoned
+
+## Notable Insights
+3-5 bullet points on top performers, underperformers, and recommendations.
 
 Summary:""",
 
@@ -561,12 +607,17 @@ Summary:""",
 Data:
 {context}
 
-Include:
-- Total practice count
-- Patient count, outstanding balance, and bad debt per practice
-- Notable insights
+Structure your response with these sections:
 
-Use bullet points and section headers.
+## Practice Overview
+Bullet point: total practice count.
+
+## Practice Performance
+Markdown table with columns: Practice | Patients | Outstanding Balance | Bad Debt
+Sort by patient count descending. Include ALL practices from the data.
+
+## Notable Insights
+5 bullet points: highest outstanding, highest bad debt, best/worst performers, recommendations.
 
 Summary:""",
 
@@ -575,15 +626,24 @@ Summary:""",
 Data:
 {context}
 
-Include:
-- Total reviews and overall average rating
-- Rating distribution (1-5 stars)
-- Reviews by source platform
-- Locations with lowest average ratings (risk areas)
-- PHI flagged review count
-- Notable insights
+Structure your response with these sections:
 
-Use bullet points and section headers.
+## Review Overview
+Bullet points: total reviews, overall avg rating, PHI flagged count, 1-star count, 5-star count.
+
+## Rating Distribution
+Markdown table with columns: Rating | Count | Percentage
+Show 1-star through 5-star.
+
+## Reviews by Source Platform
+Markdown table with columns: Source | Reviews | Avg Rating
+
+## Lowest Rated Locations (Risk Areas)
+Markdown table with columns: Location | Reviews | Avg Rating
+Show locations with lowest ratings.
+
+## Notable Insights
+3-5 bullet points on sentiment trends and risk areas.
 
 Summary:""",
 
@@ -592,16 +652,35 @@ Summary:""",
 Data:
 {context}
 
-Include:
-- Total charged, paid, outstanding balance, bad debt, contractual adjustments, collection agency adjustments
-- Collection rate (total paid / total charged %)
-- Outstanding balance by state (top 10)
-- Outstanding and bad debt by payor cohort
-- Charge volume and amounts by year (trend analysis)
-- Transaction/payment volume by year (trend analysis)
-- Key financial risks or insights
+Structure your response with these sections:
 
-Use bullet points and section headers. Format dollar amounts with $ and commas.
+## Financial Overview
+Markdown table with columns: Metric | Amount
+Rows: Total Charged, Total Paid, Collection Rate, Total Outstanding, Total Bad Debt, Contractual Adjustments, Collection Agency Adjustments.
+
+## Charge Summary
+Bullet points: total charges, total charge amount, avg charge amount.
+
+## Transaction Summary
+Bullet points: total transactions, total payments, total bad debt adjustments.
+
+## Outstanding Balance by State
+Markdown table with columns: State | Outstanding Balance | Bad Debt
+Top 10 states.
+
+## Outstanding Balance by Payor Cohort
+Markdown table with columns: Cohort | Patients | Outstanding Balance | Bad Debt
+
+## Annual Charge Trend
+Markdown table with columns: Year | Charges | Total Amount
+
+## Annual Payment Trend
+Markdown table with columns: Year | Transactions | Total Payments
+
+## Key Financial Risks & Insights
+5-7 bullet points on risks, concentration areas, trends, and recommendations.
+
+Format all dollar amounts with $ and commas. Format percentages to 1 decimal place.
 
 Summary:""",
 
@@ -610,14 +689,22 @@ Summary:""",
 Data:
 {context}
 
-Include:
-- Total charges and amounts
-- Breakdown by procedure modality
-- Yearly charge trend
-- Top diagnosis codes
-- Notable insights
+Structure your response with these sections:
 
-Use bullet points and section headers.
+## Charge Overview
+Bullet points: total charges, total amount, avg charge amount.
+
+## Charges by Procedure Modality
+Markdown table with columns: Modality | Charge Count | Total Amount
+
+## Annual Charge Trend
+Markdown table with columns: Year | Charge Count | Total Amount
+
+## Top Diagnosis Codes
+Markdown table with columns: Diagnosis Code | Charge Count
+
+## Notable Insights
+3-5 bullet points on trends and patterns.
 
 Summary:""",
 
@@ -626,14 +713,20 @@ Summary:""",
 Data:
 {context}
 
-Include:
-- Total transactions, payments, adjustments, bad debt
-- Average payment amount
-- Year-over-year payment trend
-- Transaction type breakdown
-- Notable insights
+Structure your response with these sections:
 
-Use bullet points and section headers.
+## Transaction Overview
+Markdown table with columns: Metric | Value
+Rows: Total Transactions, Total Payments, Total Adjustments, Total Bad Debt, Avg Payment.
+
+## Annual Payment Trend
+Markdown table with columns: Year | Transactions | Total Payments
+
+## Transaction Type Breakdown
+Markdown table with columns: Type | Count | Total Payments
+
+## Notable Insights
+3-5 bullet points on payment trends, anomalies, and recommendations.
 
 Summary:""",
 }
@@ -893,15 +986,20 @@ async def summarize_all_nodes(label: str) -> AsyncGenerator[dict, None]:
         yield {"type": "error", "data": f"Failed to fetch {label} data: {e}"}
         return
 
-    # ── 2. Format context as readable text ────────────────────────────────
+    # ── 2. Emit structured data for chart rendering in openai_compat.py ──
+    # This chunk is consumed by generate_stream() to build Recharts artifacts.
+    # It must be yielded BEFORE tokens so the SSE consumer can buffer it.
+    yield {"type": "summary_data", "label": label, "data": data}
+
+    # ── 3. Format context as readable text ────────────────────────────────
     context_text = _format_context(label, data)
     logger.debug(f"aggregate context ({len(context_text)} chars)")
 
-    # ── 3. Build prompt ───────────────────────────────────────────────────
+    # ── 4. Build prompt ───────────────────────────────────────────────────
     prompt_template = _PROMPTS.get(label, "Summarize this data:\n{context}\n\nSummary:")
     prompt = prompt_template.format(context=context_text)
 
-    # ── 4. Stream through QA LLM ──────────────────────────────────────────
+    # ── 5. Stream through QA LLM ──────────────────────────────────────────
     try:
         llm = get_llm(streaming=True)
         queue: asyncio.Queue = asyncio.Queue()

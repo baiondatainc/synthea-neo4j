@@ -371,67 +371,111 @@ def fetch_node_context(label: str, entity_id: str) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 
 _PATIENT_PROMPT = """You are a healthcare data analyst. Summarize this patient's profile clearly and concisely.
+Be factual. Do not invent information not in the data.
 
 Patient Data:
 {context}
 
-Include:
-- Demographics (age, gender, state, city)
-- Financial status (total charged, paid, outstanding balance, bad debt)
-- Insurance / payor information
-- Visit history (locations, dates)
-- Call activity and tier
-- Statement history
-- Top diagnosis codes
-- Any notable flags (self-pay, bad address, catastrophe, friction, etc.)
+Structure your response with these sections:
 
-Be factual. Use bullet points. Do not invent information not in the data.
+## Patient Profile
+Markdown table with columns: Field | Value
+Rows: Patient ID, Date of Birth, Gender, Address, Bad Address Flag.
+
+## Financial Summary
+Markdown table with columns: Metric | Amount
+Rows: Total Charged, Total Paid, Outstanding Balance, Bad Debt, Carrier, Plan, Payor Cohort.
+
+## Patient Flags
+Bullet points (only show flags that are True): Self-Pay, Has Insurance, BAI, Catastrophe, Friction, Clean, Is SAPA, Is Tennessee, Is Atlanta 404, Multi-Practice.
+
+## Call Activity
+Bullet points: Call Tier, Has Any Calls, Total Calls in Window.
+
+## Statement History
+Bullet points: Statement Count, Total Patient Balance on Statements.
+
+## Recent Visits
+Markdown table with columns: Location | Admit Date | Discharge Date
+Show up to 5 most recent visits.
+
+## Top Diagnosis Codes
+Markdown table with columns: Diagnosis Code | Charge Count
 
 Summary:"""
 
 
 _LOCATION_PROMPT = """You are a healthcare data analyst. Summarize this location's profile.
+Be factual. Do not invent information not in the data.
 
 Location Data:
 {context}
 
-Include:
-- Location name, address, type
-- Total visits and patient count
-- Birdeye review stats (avg rating, total reviews, 1-star count)
-- Any notable metrics
+Structure your response with these sections:
 
-Be factual. Use bullet points.
+## Location Profile
+Markdown table with columns: Field | Value
+Rows: Name, Type, Address, City, State, ZIP, NPI, Phone.
+
+## Visit & Patient Stats
+Markdown table with columns: Metric | Value
+Rows: Total Visits, Total Patients, First Visit, Last Visit.
+
+## Birdeye Review Stats
+Markdown table with columns: Metric | Value
+Rows: Total Reviews, Avg Rating, 1-Star Reviews.
+
+## Notable Insights
+2-3 bullet points.
 
 Summary:"""
 
 
 _CAMPAIGN_PROMPT = """You are a healthcare data analyst. Summarize this campaign's performance.
+Be factual. Do not invent information not in the data.
 
 Campaign Data:
 {context}
 
-Include:
-- Campaign name and notes
-- Total calls, avg call time, abandoned calls
-- Patient reach (count, avg and total outstanding balance)
+Structure your response with these sections:
 
-Be factual. Use bullet points.
+## Campaign Profile
+Bullet points: Campaign Name, Campaign ID, Notes.
+
+## Call Statistics
+Markdown table with columns: Metric | Value
+Rows: Total Calls, Avg Call Time (s), Abandoned Calls.
+
+## Patient Reach
+Markdown table with columns: Metric | Value
+Rows: Patients Reached, Avg Outstanding Balance, Total Outstanding Balance.
+
+## Notable Insights
+2-3 bullet points.
 
 Summary:"""
 
 
 _PRACTICE_PROMPT = """You are a healthcare data analyst. Summarize this practice.
+Be factual. Do not invent information not in the data.
 
 Practice Data:
 {context}
 
-Include:
-- Practice code and ID
-- Patient count, total outstanding balance, total bad debt
-- Locations under this practice
+Structure your response with these sections:
 
-Be factual. Use bullet points.
+## Practice Profile
+Bullet points: Practice Code, Practice ID.
+
+## Financial Performance
+Markdown table with columns: Metric | Value
+Rows: Patient Count, Total Outstanding Balance, Total Bad Debt.
+
+## Locations
+Markdown table with columns: Location | City | State
+
+## Notable Insights
+2-3 bullet points.
 
 Summary:"""
 
