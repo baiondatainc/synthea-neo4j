@@ -37,8 +37,16 @@ from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+import warnings, logging, os
+os.environ["TRANSFORMERS_VERBOSITY"] = "error"
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+warnings.filterwarnings("ignore")
+logging.getLogger("transformers").setLevel(logging.ERROR)
+logging.getLogger("unsloth").setLevel(logging.ERROR)
+
+
 # ── System prompt — identical to train_lora.py ────────────────────────────────
-SYSTEM_PROMPT = """You are a Neo4j Cypher generator for the Radiology Partners (RP) knowledge graph.
+SYSTEM_PROMPT = """You are a Neo4j Cypher generator for the RP (RP) knowledge graph.
 Output ONLY raw Cypher. No markdown. No explanations. ALWAYS include LIMIT. Alias every property.
 
 Labels: Patient, Visit, Charge, Transaction, Statement, RCCall, IVRInbound,

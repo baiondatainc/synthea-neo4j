@@ -61,3 +61,5 @@ gguf_export_v1/
 gguf_export_v1_gguf/
 runtime/
 unsloth_compiled_cache/
+gguf_export_v3/
+gguf_export_v3_gguf/

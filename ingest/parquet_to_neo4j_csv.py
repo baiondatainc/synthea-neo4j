@@ -70,7 +70,7 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
 
 def fmt_dt(series: pd.Series) -> pd.Series:
     """Format datetime columns as ISO strings neo4j-admin understands."""
-    return pd.to_datetime(series, errors="coerce").dt.strftime("%Y-%m-%dT%H:%M:%S").fillna("")
+    return pd.to_datetime(series, errors="coerce", utc=True).dt.strftime("%Y-%m-%dT%H:%M:%SZ").fillna("")       
 
 
 def pid(src: pd.Series, patient_id: pd.Series) -> pd.Series:

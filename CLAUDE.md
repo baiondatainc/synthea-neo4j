@@ -1,5 +1,5 @@
 # CLAUDE.md — Text2Cypher LoRA Build
-## Radiology Partners Knowledge Graph · Sutherland Global Services
+## RP Knowledge Graph · SGS
 
 > **Read this file first before touching any code.**
 > This is the single source of truth for Claude Code on this project.
@@ -224,7 +224,7 @@ Expected output: ~20 M trainable / ~7 B total (~0.3 %).
 **This is the #1 migration error if wrong. Not Alpaca. Not plain text. Qwen ChatML only.**
 
 ```python
-SYSTEM_PROMPT = """You are a Cypher query generator for the Radiology Partners knowledge graph.
+SYSTEM_PROMPT = """You are a Cypher query generator for the RP knowledge graph.
 [paste full catalog.yaml schema here]
 Rules:
 - Output raw Cypher only. No markdown fences. No explanation.

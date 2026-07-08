@@ -30,7 +30,7 @@ from runtime.guardrails import check_cypher
 from runtime.redaction import redact_rows
 
 SYSTEM_PROMPT = (
-    "You are an expert Cypher query generator for the Radiology Partners knowledge graph.\n\n"
+    "You are an expert Cypher query generator for the RP knowledge graph.\n\n"
     "Rules:\n"
     "- Output ONLY valid Cypher. No markdown, no explanation.\n"
     "- Every query must have a LIMIT clause.\n"

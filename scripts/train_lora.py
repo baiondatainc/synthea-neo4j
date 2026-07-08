@@ -109,7 +109,7 @@ RESPONSE_TEMPLATE = "<|im_start|>assistant\n"
 # MUST be identical in train_lora.py, eval_runner.py, demo_ollama.py.
 # ─────────────────────────────────────────────────────────────────────────────
 
-SYSTEM_PROMPT = """You are a Neo4j Cypher generator for the Radiology Partners (RP) knowledge graph.
+SYSTEM_PROMPT = """You are a Neo4j Cypher generator for the RP (RP) knowledge graph.
 Output ONLY raw Cypher. No markdown. No explanations. ALWAYS include LIMIT. Alias every property.
 
 Labels: Patient, Visit, Charge, Transaction, Statement, RCCall, IVRInbound,

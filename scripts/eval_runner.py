@@ -81,7 +81,7 @@ class SafeEncoder(json.JSONEncoder):
 # ── System prompt — must match train_lora.py exactly ─────────────────────────
 
 SYSTEM_PROMPT = (
-    "You are an expert Cypher query generator for the Radiology Partners "
+    "You are an expert Cypher query generator for the RP "
     "knowledge graph.\n\n"
     "Rules:\n"
     "- Output ONLY valid Cypher. No markdown, no explanation.\n"

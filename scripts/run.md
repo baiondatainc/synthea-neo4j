@@ -82,3 +82,16 @@ python demo_ollama.py \
     --uri bolt://localhost:7687 \
     --user neo4j --password rp_strong_pass_2025 \
     --demo
+
+```
+python scripts/demo_inference.py \
+    --model ./lora_adapter_v3 \
+    --uri bolt://localhost:7687 \
+    --user neo4j --password rp_strong_pass_2025
+```
+
+
+
+python export_to_ollama.py --adapter ./lora_adapter_v3 --tag rp-cypher-v3
+
+
