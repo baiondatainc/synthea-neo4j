@@ -860,8 +860,42 @@ common_paths:
 # Used by guardrails/input.py to reject off-topic or jailbreak-style questions.
 # Lower-case substring match on the incoming question text.
 
+# ── Allowed topic patterns ────────────────────────────────────────────────────
+# Used by guardrails/input.py to reject off-topic or jailbreak-style questions.
+# Lower-case substring match on the incoming question text.
+#
+# UPDATED: added summary/aggregate/overview intent phrases so that
+# "summarize all patients", "financial overview", "complete financial summary"
+# etc. are not blocked by the input guardrail.
+
 allowed_topics:
-  # Entities
+  # ── Summary / aggregate intents ──────────────────────────────────────────
+  - summarize
+  - summary
+  - overview
+  - profile
+  - executive summary
+  - financial summary
+  - financial overview
+  - complete financial
+  - portfolio
+  - aggregate
+  - breakdown
+  - report
+  - how are we doing
+  - high level
+  - all patients
+  - all locations
+  - all campaigns
+  - all practices
+  - all charges
+  - all transactions
+  - all reviews
+  - performance summary
+  - give me a summary
+  - show me a summary
+
+  # ── Entities ─────────────────────────────────────────────────────────────
   - patient
   - patients
   - practice
@@ -892,7 +926,8 @@ allowed_topics:
   - icd
   - cpt
   - hcpcs
-  # Financial
+
+  # ── Financial ─────────────────────────────────────────────────────────────
   - balance
   - bad debt
   - collections
@@ -910,7 +945,14 @@ allowed_topics:
   - paid
   - a/r
   - ar
-  # Cohorts / segments
+  - financial
+  - finance
+  - finances
+  - contractual
+  - collection agency
+  - collection rate
+
+  # ── Cohorts / segments ────────────────────────────────────────────────────
   - cohort
   - catastrophe
   - friction
@@ -924,7 +966,9 @@ allowed_topics:
   - nraa
   - tennessee
   - atlanta
-  # Clinical
+  - bai
+
+  # ── Clinical ──────────────────────────────────────────────────────────────
   - modality
   - radiology
   - imaging
@@ -932,21 +976,29 @@ allowed_topics:
   - ct scan
   - ultrasound
   - nuclear medicine
-  # Geography
+
+  # ── Geography ─────────────────────────────────────────────────────────────
   - state
   - zip
   - city
   - texas
   - florida
   - houston
-  # Operations
-  - campaign
+
+  # ── Operations ────────────────────────────────────────────────────────────
   - outreach
   - call
   - calls
   - contact
-  - statement
-  # Schema / meta
+  - trend
+  - monthly
+  - annual
+  - quarterly
+  - yearly
+  - by year
+  - by month
+
+  # ── Schema / meta ─────────────────────────────────────────────────────────
   - graph
   - schema
   - how many
@@ -957,5 +1009,4 @@ allowed_topics:
   - average
   - total
   - compare
-  - trend
   - breakdown

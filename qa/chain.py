@@ -2,17 +2,19 @@
 LangChain RAG pipeline with streaming and result extraction for charting.
 
 Architecture:
-  input guardrail → cypher_llm (text2cypher) → autofix → cypher guardrail
-  (read-only, schema, row cap) → Neo4j → output redaction → qa_llm → streamed answer
+  input guardrail → aggregate summary → single node summary →
+  memory rewrite → cache lookup → hybrid route → cypher path →
+  autofix → cypher guardrail → Neo4j → redaction → qa_llm → streamed answer
 
-Changes in this version:
-  - cypher_autofix applied in GuardedNeo4jGraph.query() BEFORE guardrail check
-    so SQL date functions, GROUP BY, greater_than() etc. are corrected silently
-    instead of being rejected and surfaced to the user.
-  - Phase F: memory persist runs unconditionally (not gated on steps existing)
-    so the transcript is always written to Redis, even on 0-row results.
-  - Phase F: INFO-level logs so transcript writes are visible at default log level.
-  - Phase B: INFO log on entry so you can confirm conv_id and memory_enabled.
+Pipeline phases:
+  A   — input guardrail
+  A2  — aggregate node summary shortcut (all patients, all locations, etc.)
+  A3  — single node summary shortcut (patient 12345, location XYZ, etc.)
+  B   — memory + follow-up rewriting
+  C   — answer cache lookup
+  D   — hybrid retriever route
+  E   — Cypher QA chain
+  F   — memory + cache persist
 """
 import os
 import time
@@ -30,8 +32,10 @@ from config import get_settings
 from graph.schema_text import GRAPH_SCHEMA
 from qa.llm import get_llm
 from metadata.catalog import get_catalog
-from guardrails import check_input, check_cypher, redact_rows, redact_text
+from guardrails import check_input, check_cypher, redact_rows
 from qa.cypher_autofix import autofix_cypher
+from qa.summarizer import detect_summary_request, summarize_node
+from qa.aggregate_summarizer import detect_aggregate_summary, summarize_all_nodes
 from memory import (
     get_session_store,
     get_focus_store,
@@ -55,6 +59,10 @@ def invalidate_chain_cache() -> None:
     logger.info("Chain cache invalidated — graph + LLM will rebuild on next request")
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Streaming callback
+# ─────────────────────────────────────────────────────────────────────────────
+
 class StreamingCallback(AsyncCallbackHandler):
     def __init__(self, queue: asyncio.Queue):
         self.queue = queue
@@ -72,6 +80,10 @@ class StreamingCallback(AsyncCallbackHandler):
         pass
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Guarded Neo4j graph — autofix + guardrail + redaction
+# ─────────────────────────────────────────────────────────────────────────────
+
 class GuardrailBlocked(Exception):
     pass
 
@@ -81,14 +93,11 @@ class GuardedNeo4jGraph(Neo4jGraph):
         settings = get_settings()
 
         # ── Auto-fix common model errors BEFORE guardrail sees the query ──
-        # Fixes: year(x), month(x), quarter(x), date_trunc(), GROUP BY,
-        #        substring() on DateTime, greater_than(), fake source_db values,
-        #        ORDER BY on variables consumed by prior WITH aggregation.
         if settings.guardrails_enabled:
             original_query = query
             query = autofix_cypher(query, logger)
             if query != original_query:
-                logger.info(f"autofix applied — query patched before guardrail")
+                logger.info("autofix applied — query patched before guardrail")
 
         # ── Guardrail: read-only, schema, row cap ─────────────────────────
         if settings.guardrails_enabled:
@@ -110,6 +119,10 @@ class GuardedNeo4jGraph(Neo4jGraph):
 
         return rows
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Graph + LLM singletons
+# ─────────────────────────────────────────────────────────────────────────────
 
 def get_neo4j_graph() -> Neo4jGraph:
     global _GRAPH_CACHE
@@ -181,6 +194,10 @@ def get_cypher_llm():
         return get_llm(streaming=False)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Prompt templates
+# ─────────────────────────────────────────────────────────────────────────────
+
 CYPHER_GENERATION_PROMPT = PromptTemplate(
     input_variables=["schema", "question"],
     template="""Schema:
@@ -206,6 +223,10 @@ Graph Results: {context}
 Answer:""",
 )
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Chain builder + step extractor
+# ─────────────────────────────────────────────────────────────────────────────
 
 def build_chain(streaming_callback: StreamingCallback = None) -> GraphCypherQAChain:
     t0 = time.monotonic()
@@ -264,6 +285,49 @@ def extract_from_steps(intermediate_steps: list) -> tuple[str, list]:
     return cypher, results
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Memory persist helper — shared by ALL paths
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _persist_memory(
+    conversation_id: str | None,
+    session_store,
+    focus_store,
+    original_question: str,
+    answer_text: str,
+    results: list,
+    label: str = "unknown",
+) -> None:
+    """Write user + assistant turns to Redis. Safe to call from any path."""
+    if not (conversation_id and session_store and focus_store):
+        logger.info(
+            f"Phase F [{label}]: memory SKIPPED — "
+            f"conv_id={bool(conversation_id)} "
+            f"session={bool(session_store)} "
+            f"focus={bool(focus_store)}"
+        )
+        return
+    try:
+        session_store.append_user(conversation_id, original_question)
+        if answer_text:
+            session_store.append_assistant(conversation_id, answer_text)
+        if results:
+            new_focus = extract_entity_ids(results)
+            if new_focus:
+                focus_store.set(conversation_id, new_focus)
+                logger.info(f"Phase F [{label}]: focus updated — {len(new_focus)} IDs")
+        logger.info(
+            f"Phase F [{label}]: transcript written — "
+            f"conv_id={conversation_id!r} answer={len(answer_text)}chars"
+        )
+    except Exception as e:
+        logger.warning(f"Phase F [{label}]: memory persist failed: {e}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Main streaming entry point
+# ─────────────────────────────────────────────────────────────────────────────
+
 async def stream_qa_response(
     question: str,
     conversation_id: str | None = None,
@@ -274,6 +338,7 @@ async def stream_qa_response(
     timings: dict[str, float] = {}
 
     # ── Phase A: input guardrail ──────────────────────────────────────────
+    t_a = time.monotonic()
     if settings.guardrails_enabled:
         gate = check_input(question)
         if not gate.ok:
@@ -282,14 +347,60 @@ async def stream_qa_response(
             yield {"type": "end", "data": ""}
             return
         question = gate.payload
-    timings["guardrail"] = time.monotonic() - t_start
+    timings["guardrail"] = time.monotonic() - t_a
+
+    # Initialise memory stores early — needed by summary paths too
+    original_question = question
+    session_store = get_session_store() if conversation_id else None
+    focus_store   = get_focus_store()   if conversation_id else None
+
+    # ── Phase A2: aggregate node summary ─────────────────────────────────
+    # e.g. "summarize all patients", "financial overview", "practice summary"
+    agg_intent = detect_aggregate_summary(question)
+    if agg_intent:
+        logger.info(f"Phase A2: aggregate summary → label={agg_intent['label']}")
+        answer_tokens: list[str] = []
+        async for chunk in summarize_all_nodes(agg_intent["label"]):
+            if chunk["type"] == "token":
+                answer_tokens.append(chunk["data"])
+            yield chunk
+            if chunk["type"] in ("end", "error"):
+                break
+        _persist_memory(
+            conversation_id, session_store, focus_store,
+            original_question, "".join(answer_tokens), [],
+            label="aggregate_summary",
+        )
+        timings["total"] = time.monotonic() - t_start
+        logger.info(f"Pipeline complete (aggregate_summary) — total={int(timings['total']*1000)}ms")
+        return
+
+    # ── Phase A3: single node summary ────────────────────────────────────
+    # e.g. "summarize patient 12345", "overview of location SMED Radiology"
+    summary_intent = detect_summary_request(question)
+    if summary_intent:
+        logger.info(
+            f"Phase A3: single summary → "
+            f"label={summary_intent['label']} id={summary_intent['id']!r}"
+        )
+        answer_tokens: list[str] = []
+        async for chunk in summarize_node(summary_intent["label"], summary_intent["id"]):
+            if chunk["type"] == "token":
+                answer_tokens.append(chunk["data"])
+            yield chunk
+            if chunk["type"] in ("end", "error"):
+                break
+        _persist_memory(
+            conversation_id, session_store, focus_store,
+            original_question, "".join(answer_tokens), [],
+            label="single_summary",
+        )
+        timings["total"] = time.monotonic() - t_start
+        logger.info(f"Pipeline complete (single_summary) — total={int(timings['total']*1000)}ms")
+        return
 
     # ── Phase B: memory + follow-up rewriting ─────────────────────────────
     t_mem = time.monotonic()
-    original_question = question
-    session_store = get_session_store() if conversation_id else None
-    focus_store = get_focus_store() if conversation_id else None
-
     logger.info(
         f"Phase B: conv_id={conversation_id!r} "
         f"memory_enabled={settings.memory_enabled} "
@@ -299,7 +410,7 @@ async def stream_qa_response(
 
     if conversation_id and settings.memory_enabled and session_store and focus_store:
         transcript = session_store.transcript(conversation_id)
-        focus_ids = focus_store.get(conversation_id)
+        focus_ids  = focus_store.get(conversation_id)
         logger.info(
             f"Phase B: transcript_chars={len(transcript)} "
             f"focus_ids={len(focus_ids)} "
@@ -315,38 +426,29 @@ async def stream_qa_response(
     timings["memory"] = time.monotonic() - t_mem
 
     # ── Phase C: answer cache lookup ──────────────────────────────────────
-    t_cache = time.monotonic()
-    cache = None
+    t_cache   = time.monotonic()
+    cache     = None
     cache_key = None
     if use_cache and settings.cache_enabled:
-        cache = get_answer_cache()
+        cache     = get_answer_cache()
         cache_key = make_cache_key(question, settings.schema_version)
-        cached = cache.get(cache_key)
+        cached    = cache.get(cache_key)
         if cached:
             timings["cache_lookup"] = time.monotonic() - t_cache
-            timings["total"] = time.monotonic() - t_start
+            timings["total"]        = time.monotonic() - t_start
             logger.info(
                 f"Answer cache HIT — key={cache_key}, "
                 f"total={int(timings['total'] * 1000)}ms"
             )
             yield {"type": "cache_hit", "data": cache_key}
-            yield {"type": "token", "data": cached.get("answer", "")}
-            yield {"type": "cypher", "data": cached.get("cypher", ""), "results": cached.get("results", [])}
-            yield {"type": "end", "data": ""}
-            if conversation_id and session_store and focus_store:
-                try:
-                    session_store.append_user(conversation_id, original_question)
-                    if cached.get("answer"):
-                        session_store.append_assistant(conversation_id, cached["answer"])
-                    if cached.get("results"):
-                        new_focus = extract_entity_ids(cached["results"])
-                        if new_focus:
-                            focus_store.set(conversation_id, new_focus)
-                    logger.info(
-                        f"Phase C cache-hit: transcript written for conv_id={conversation_id!r}"
-                    )
-                except Exception as e:
-                    logger.warning(f"Memory persist on cache hit failed: {e}")
+            yield {"type": "token",     "data": cached.get("answer", "")}
+            yield {"type": "cypher",    "data": cached.get("cypher", ""), "results": cached.get("results", [])}
+            yield {"type": "end",       "data": ""}
+            _persist_memory(
+                conversation_id, session_store, focus_store,
+                original_question, cached.get("answer", ""),
+                cached.get("results", []), label="cache_hit",
+            )
             return
     timings["cache_lookup"] = time.monotonic() - t_cache
 
@@ -354,7 +456,7 @@ async def stream_qa_response(
     if settings.hybrid_retriever_enabled and route(question) == Path.HYBRID:
         logger.info(f"Router → HYBRID for: {question[:80]}")
         answer_tokens: list[str] = []
-        hybrid_cypher = ""
+        hybrid_cypher  = ""
         hybrid_results: list[dict] = []
         t_hybrid = time.monotonic()
         try:
@@ -362,7 +464,7 @@ async def stream_qa_response(
                 if ev["type"] == "token":
                     answer_tokens.append(ev["data"])
                 elif ev["type"] == "cypher":
-                    hybrid_cypher = ev.get("data", "")
+                    hybrid_cypher  = ev.get("data", "")
                     hybrid_results = ev.get("results", [])
                 yield ev
                 if ev["type"] in ("end", "error"):
@@ -373,50 +475,38 @@ async def stream_qa_response(
             return
 
         timings["hybrid"] = time.monotonic() - t_hybrid
-        timings["total"] = time.monotonic() - t_start
-        try:
-            answer_text = "".join(answer_tokens).strip()
-            if conversation_id and session_store and focus_store:
-                session_store.append_user(conversation_id, original_question)
-                if answer_text:
-                    session_store.append_assistant(conversation_id, answer_text)
-                if hybrid_results:
-                    new_focus = extract_entity_ids(hybrid_results)
-                    if new_focus:
-                        focus_store.set(conversation_id, new_focus)
-                logger.info(
-                    f"Phase D hybrid: transcript written for conv_id={conversation_id!r}"
-                )
-            if cache is not None and cache_key and answer_text and hybrid_results:
-                cache.set(
-                    cache_key,
-                    {
-                        "question": question,
-                        "cypher": hybrid_cypher,
-                        "results": hybrid_results,
-                        "answer": answer_text,
-                    },
-                )
-                logger.info(f"Answer cache SET (hybrid): {cache_key}")
-        except Exception as e:
-            logger.warning(f"Hybrid post-success persist failed: {e}")
+        timings["total"]  = time.monotonic() - t_start
+        answer_text = "".join(answer_tokens).strip()
+        _persist_memory(
+            conversation_id, session_store, focus_store,
+            original_question, answer_text, hybrid_results, label="hybrid",
+        )
+        if cache is not None and cache_key and answer_text and hybrid_results:
+            cache.set(cache_key, {
+                "question": question,
+                "cypher":   hybrid_cypher,
+                "results":  hybrid_results,
+                "answer":   answer_text,
+            })
+            logger.info(f"Answer cache SET (hybrid): {cache_key}")
+        logger.info(f"Pipeline complete (hybrid) — total={int(timings['total']*1000)}ms")
         return
 
-    # ── Phase E: Cypher path ──────────────────────────────────────────────
-    t_build = time.monotonic()
-    queue: asyncio.Queue = asyncio.Queue()
+    # ── Phase E: Cypher QA chain ──────────────────────────────────────────
+    t_build  = time.monotonic()
+    queue    = asyncio.Queue()
     callback = StreamingCallback(queue)
-    chain = build_chain(streaming_callback=callback)
+    chain    = build_chain(streaming_callback=callback)
     timings["build_chain"] = time.monotonic() - t_build
 
-    chain_result: dict = {}
+    chain_result: dict       = {}
     answer_tokens: list[str] = []
     t_chain_start = time.monotonic()
 
     async def run_chain():
         try:
             result = await chain.ainvoke({"query": question})
-            chain_result["steps"] = result.get("intermediate_steps", [])
+            chain_result["steps"]  = result.get("intermediate_steps", [])
             chain_result["answer"] = result.get("result", "") or ""
             cypher, results = extract_from_steps(chain_result["steps"])
             logger.info(f"Extracted cypher: {cypher[:80] if cypher else 'none'}")
@@ -424,21 +514,18 @@ async def stream_qa_response(
             if chain_result["answer"] and not answer_tokens:
                 await queue.put({"type": "token", "data": chain_result["answer"]})
             await queue.put({"type": "cypher", "data": cypher, "results": results})
-            await queue.put({"type": "end", "data": ""})
+            await queue.put({"type": "end",    "data": ""})
         except GuardrailBlocked as e:
             logger.info(f"Cypher guardrail rejected: {e}")
             chain_result["finished"] = True
-            await queue.put({
-                "type": "blocked",
-                "data": f"The generated Cypher was rejected: {e}. Try rephrasing.",
-            })
-            await queue.put({"type": "end", "data": ""})
+            await queue.put({"type": "blocked", "data": f"The generated Cypher was rejected: {e}. Try rephrasing."})
+            await queue.put({"type": "end",     "data": ""})
         except Exception as e:
             logger.error(f"Chain error: {e}", exc_info=True)
             error_msg = str(e)
             if "SyntaxError" in error_msg or "GqlError" in error_msg:
                 error_msg = (
-                    f"The query generator produced invalid Cypher. "
+                    "The query generator produced invalid Cypher. "
                     f"Try rephrasing.\n\nDetails: {error_msg[:300]}"
                 )
             await queue.put({"type": "error", "data": error_msg})
@@ -446,7 +533,7 @@ async def stream_qa_response(
     task = asyncio.create_task(run_chain())
 
     while True:
-        item = await queue.get()
+        item     = await queue.get()
         terminal = chain_result.get("steps") or chain_result.get("finished")
         if item["type"] == "end" and not terminal:
             continue
@@ -460,8 +547,6 @@ async def stream_qa_response(
     timings["chain_execute"] = time.monotonic() - t_chain_start
 
     # ── Phase F: persist to memory + cache ───────────────────────────────
-    # Memory ALWAYS writes (even 0-row results) so follow-ups have a transcript.
-    # Cache only writes when we have a real answer + valid Cypher.
     t_persist = time.monotonic()
     logger.info(
         f"Phase F: conv_id={conversation_id!r} "
@@ -471,42 +556,22 @@ async def stream_qa_response(
     )
     try:
         cypher, results = extract_from_steps(chain_result.get("steps", []))
-
         answer_text = (chain_result.get("answer") or "").strip()
         if not answer_text:
             answer_text = "".join(answer_tokens).strip()
 
-        # Memory — unconditional: write every turn regardless of row count.
-        if conversation_id and session_store and focus_store:
-            session_store.append_user(conversation_id, original_question)
-            logger.info(f"Phase F: user turn written — conv_id={conversation_id!r}")
-            if answer_text:
-                session_store.append_assistant(conversation_id, answer_text)
-                logger.info(f"Phase F: assistant turn written — {len(answer_text)} chars")
-            if results:
-                new_focus = extract_entity_ids(results)
-                if new_focus:
-                    focus_store.set(conversation_id, new_focus)
-                    logger.info(f"Phase F: focus updated — {len(new_focus)} IDs")
-        else:
-            logger.info(
-                f"Phase F: memory SKIPPED — "
-                f"conv_id={bool(conversation_id)} "
-                f"session_store={bool(session_store)} "
-                f"focus_store={bool(focus_store)}"
-            )
+        _persist_memory(
+            conversation_id, session_store, focus_store,
+            original_question, answer_text, results, label="cypher",
+        )
 
-        # Cache — only on real answer + valid Cypher.
         if cache is not None and cache_key and answer_text and cypher:
-            cache.set(
-                cache_key,
-                {
-                    "question": question,
-                    "cypher": cypher,
-                    "results": results,
-                    "answer": answer_text,
-                },
-            )
+            cache.set(cache_key, {
+                "question": question,
+                "cypher":   cypher,
+                "results":  results,
+                "answer":   answer_text,
+            })
             logger.info(f"Answer cache SET: {cache_key}")
         else:
             logger.info(
@@ -515,20 +580,19 @@ async def stream_qa_response(
                 f"answer={bool(answer_text)}({len(answer_text)}chars) "
                 f"cypher={bool(cypher)}"
             )
-
     except Exception as e:
         logger.warning(f"Phase F persist failed: {e}", exc_info=True)
 
     timings["persist"] = time.monotonic() - t_persist
-    timings["total"] = time.monotonic() - t_start
+    timings["total"]   = time.monotonic() - t_start
 
     logger.info(
         f"Pipeline complete (cypher) — "
-        f"guardrail={int(timings['guardrail'] * 1000)}ms, "
-        f"memory={int(timings['memory'] * 1000)}ms, "
-        f"cache_lookup={int(timings['cache_lookup'] * 1000)}ms, "
-        f"build_chain={int(timings['build_chain'] * 1000)}ms, "
-        f"chain_execute={int(timings['chain_execute'] * 1000)}ms, "
-        f"persist={int(timings['persist'] * 1000)}ms, "
+        f"guardrail={int(timings.get('guardrail', 0) * 1000)}ms, "
+        f"memory={int(timings.get('memory', 0) * 1000)}ms, "
+        f"cache_lookup={int(timings.get('cache_lookup', 0) * 1000)}ms, "
+        f"build_chain={int(timings.get('build_chain', 0) * 1000)}ms, "
+        f"chain_execute={int(timings.get('chain_execute', 0) * 1000)}ms, "
+        f"persist={int(timings.get('persist', 0) * 1000)}ms, "
         f"total={int(timings['total'] * 1000)}ms"
     )
