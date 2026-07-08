@@ -290,7 +290,7 @@ def export_birdeye(data_dir: Path, out_dir: Path):
     out = pd.DataFrame()
     out["birdeyeId:ID(BirdeyeReview)"] = bid
     out["location"]                    = df["Location"]
-    out["date_posted"]                 = df["Date Posted On"]
+    out["date_posted:datetime"]        = fmt_dt(df["Date Posted On"])
     out["source"]                      = df["Review Source"]
     out["rating:int"]                  = df["Review Rating"]
     out["comment"]                     = df["Review Comment"].fillna("")
