@@ -18,6 +18,15 @@ Fixes applied (in order):
   6. date_trunc() → explicit year+quarter expression
   7. ORDER BY on un-aggregated variable after WITH aggregation
   8. Hallucinated source_db filter values like 'your_source_db'
+  9. IS NOT NULL inside node property map → moved to WHERE clause
+     {state: IS NOT NULL} → WHERE n.state IS NOT NULL
+ 10. Unaliased dotted property in WITH → add AS alias
+     WITH l.state, avg(...) → WITH l.state AS state, avg(...)
+ 11. Comparison operator inside node property map → moved to WHERE clause
+     {outstanding_balance > 1000} → WHERE p.outstanding_balance > 1000
+ 12. Patient-[:REGISTERED_AT]->Location wrong hop → rewritten to correct path
+     (p:Patient)-[:REGISTERED_AT]->(l:Location)
+     → (p:Patient)-[:HAD_VISIT]->(v:Visit)-[:PERFORMED_AT]->(l:Location)
 """
 
 import re
@@ -188,10 +197,7 @@ def _fix_fake_source_db(cypher: str) -> str:
     return cypher
 
 
-# ── Fix 9: ORDER BY on pre-aggregation variable after WITH ────────────────────
-# WITH cam.name AS campaign_name, avg(...) AS avg_bal
-# ORDER BY count(rc) DESC   ← rc no longer in scope
-# → Move count into WITH, alias it, ORDER BY the alias
+# ── Fix 9b (was Fix 7): ORDER BY on pre-aggregation variable after WITH ──────
 _WITH_ORDERBY_LOST_VAR_RE = re.compile(
     r'(WITH\s+.+?)\s+ORDER\s+BY\s+count\((\w+)\)',
     re.IGNORECASE | re.DOTALL,
@@ -201,16 +207,202 @@ def _fix_orderby_lost_var(cypher: str) -> str:
     """
     Detects ORDER BY count(var) where var was consumed by a prior WITH aggregation.
     Injects count(var) AS _cnt into the WITH clause and rewrites ORDER BY.
+    WITH cam.name AS campaign_name, avg(...) AS avg_bal
+    ORDER BY count(rc) DESC
+    → WITH cam.name AS campaign_name, avg(...) AS avg_bal, count(rc) AS _rc_count
+    ORDER BY _rc_count DESC
     """
     m = _WITH_ORDERBY_LOST_VAR_RE.search(cypher)
     if not m:
         return cypher
     with_clause = m.group(1)
     var = m.group(2)
-    # Add count alias to WITH
     fixed_with = with_clause.rstrip(', ') + f', count({var}) AS _{var}_count'
     cypher = cypher.replace(m.group(0), fixed_with + f'\nORDER BY _{var}_count')
     return cypher
+
+
+# ── Fix 9: IS NOT NULL inside node property map ──────────────────────────────
+# MATCH (l:Location {state: IS NOT NULL})
+# → MATCH (l:Location) WHERE l.state IS NOT NULL
+_INLINE_IS_NOT_NULL_NODE_RE = re.compile(
+    r'\((\w+):(\w+)\s*\{([^}]+)\}\)',
+    re.IGNORECASE,
+)
+
+def _fix_inline_is_not_null(cypher: str) -> str:
+    """
+    Moves IS NOT NULL / IS NULL checks from inline node property maps to WHERE clause.
+
+    MATCH (l:Location {state: IS NOT NULL})
+    → MATCH (l:Location) WHERE l.state IS NOT NULL
+
+    MATCH (p:Patient {state: IS NOT NULL, gender: IS NOT NULL})
+    → MATCH (p:Patient) WHERE p.state IS NOT NULL AND p.gender IS NOT NULL
+
+    Leaves valid inline filters like {is_self_pay: true} untouched.
+    """
+    null_checks_collected = []
+
+    def replacer(m):
+        var, label, props_str = m.group(1), m.group(2), m.group(3)
+        if not re.search(r'IS\s+(NOT\s+)?NULL', props_str, re.IGNORECASE):
+            return m.group(0)  # no IS NULL/IS NOT NULL — leave unchanged
+        null_checks, remaining = [], []
+        for part in re.split(r',\s*', props_str):
+            part = part.strip()
+            if not part:
+                continue
+            if re.match(r'(\w+)\s*:\s*IS\s+NOT\s+NULL', part, re.IGNORECASE):
+                key = re.match(r'(\w+)', part).group(1)
+                null_checks.append(f"{var}.{key} IS NOT NULL")
+            elif re.match(r'(\w+)\s*:\s*IS\s+NULL', part, re.IGNORECASE):
+                key = re.match(r'(\w+)', part).group(1)
+                null_checks.append(f"{var}.{key} IS NULL")
+            else:
+                remaining.append(part)
+        null_checks_collected.extend(null_checks)
+        if remaining:
+            return f"({var}:{label} {{{', '.join(remaining)}}})"
+        return f"({var}:{label})"
+
+    fixed = _INLINE_IS_NOT_NULL_NODE_RE.sub(replacer, cypher)
+
+    if not null_checks_collected:
+        return cypher
+
+    all_conds = " AND ".join(null_checks_collected)
+    if re.search(r'\bWHERE\b', fixed, re.IGNORECASE):
+        fixed = re.sub(r'\bWHERE\b\s*', f'WHERE {all_conds} AND ', fixed, count=1, flags=re.IGNORECASE)
+    else:
+        fixed = re.sub(r'(MATCH\s[^\n]+)', r'\1\nWHERE ' + all_conds, fixed, count=1, flags=re.IGNORECASE)
+    return fixed
+
+
+# ── Fix 10: unaliased dotted property in WITH ─────────────────────────────────
+# WITH l.state, avg(b.rating) AS avg_rating
+# → WITH l.state AS state, avg(b.rating) AS avg_rating
+_WITH_BODY_RE = re.compile(
+    r'\bWITH\b(.+?)(?=\bRETURN\b|\bWHERE\b|\bORDER\b|\bMATCH\b|$)',
+    re.IGNORECASE | re.DOTALL,
+)
+
+def _fix_unaliased_with(cypher: str) -> str:
+    """
+    Finds bare dotted properties in WITH clauses that lack an AS alias and adds one.
+    Only fixes simple node.property tokens — leaves function calls untouched.
+
+    WITH l.state, avg(b.rating) AS avg_rating
+    → WITH l.state AS state, avg(b.rating) AS avg_rating
+    """
+    def fix_body(m):
+        body  = m.group(1)
+        items = re.split(r',(?![^(]*\))', body)
+        fixed = []
+        for item in items:
+            s = item.strip()
+            if re.match(r'^\w+\.\w+$', s) and ' AS ' not in item.upper():
+                prop_name = s.split('.')[1]
+                fixed.append(f" {s} AS {prop_name}")
+            else:
+                fixed.append(item)
+        return "WITH" + ",".join(fixed)
+
+    return _WITH_BODY_RE.sub(fix_body, cypher)
+
+
+# ── Fix 11: comparison operator inside node property map ─────────────────────
+# MATCH (p:Patient {outstanding_balance > 1000})
+# → MATCH (p:Patient) WHERE p.outstanding_balance > 1000
+#
+# Also fixes: {outstanding_balance > 1000, is_self_pay: true}
+# → (p:Patient {is_self_pay: true}) WHERE p.outstanding_balance > 1000
+_INLINE_COMPARISON_RE = re.compile(
+    r'\((\w+):(\w+)\s*\{([^}]+)\}\)',
+    re.IGNORECASE,
+)
+_COMPARISON_PROP_RE = re.compile(
+    r'(\w+)\s*(>=|<=|!=|<>|>|<)\s*([^\s,}]+)',
+    re.IGNORECASE,
+)
+
+def _fix_inline_comparison(cypher: str) -> str:
+    """
+    Moves comparison expressions from inline node maps to WHERE clause.
+
+    MATCH (p:Patient {outstanding_balance > 1000})
+    → MATCH (p:Patient) WHERE p.outstanding_balance > 1000
+
+    MATCH (p:Patient {outstanding_balance > 1000, is_self_pay: true})
+    → MATCH (p:Patient {is_self_pay: true}) WHERE p.outstanding_balance > 1000
+
+    Leaves valid key:value filters like {is_self_pay: true} untouched.
+    """
+    comparisons_collected = []
+
+    def replacer(m):
+        var, label, props_str = m.group(1), m.group(2), m.group(3)
+        if not _COMPARISON_PROP_RE.search(props_str):
+            return m.group(0)  # no comparison operators — leave unchanged
+
+        remaining = []
+        for part in re.split(r',\s*', props_str):
+            part = part.strip()
+            if not part:
+                continue
+            cm = _COMPARISON_PROP_RE.match(part)
+            if cm:
+                key, op, val = cm.group(1), cm.group(2), cm.group(3)
+                comparisons_collected.append(f"{var}.{key} {op} {val}")
+            else:
+                remaining.append(part)
+
+        if remaining:
+            return f"({var}:{label} {{{', '.join(remaining)}}})"
+        return f"({var}:{label})"
+
+    fixed = _INLINE_COMPARISON_RE.sub(replacer, cypher)
+
+    if not comparisons_collected:
+        return cypher
+
+    all_conds = " AND ".join(comparisons_collected)
+    if re.search(r'\bWHERE\b', fixed, re.IGNORECASE):
+        fixed = re.sub(
+            r'\bWHERE\b\s*',
+            f'WHERE {all_conds} AND ',
+            fixed, count=1, flags=re.IGNORECASE,
+        )
+    else:
+        fixed = re.sub(
+            r'(MATCH\s[^\n]+)',
+            r'\1\nWHERE ' + all_conds,
+            fixed, count=1, flags=re.IGNORECASE,
+        )
+    return fixed
+
+
+# ── Fix 12: Patient-[:REGISTERED_AT]->Location wrong hop ─────────────────────
+# Patient registers at Practice, NEVER at Location.
+# Correct path: Patient-[:HAD_VISIT]->Visit-[:PERFORMED_AT]->Location
+_WRONG_REGISTERED_AT_RE = re.compile(
+    r'\((\w+):Patient\)-\[:REGISTERED_AT\]->\((\w+):Location\)',
+    re.IGNORECASE,
+)
+
+def _fix_wrong_registered_at(cypher: str) -> str:
+    """
+    (p:Patient)-[:REGISTERED_AT]->(l:Location) is always wrong.
+    Rewrites to correct 2-hop path through Visit.
+    """
+    def replacer(m):
+        p = m.group(1)
+        l = m.group(2)
+        return (
+            f"({p}:Patient)-[:HAD_VISIT]->(v_gen:Visit)"
+            f"-[:PERFORMED_AT]->({l}:Location)"
+        )
+    return _WRONG_REGISTERED_AT_RE.sub(replacer, cypher)
 
 
 # ── Master autofix ─────────────────────────────────────────────────────────────
@@ -233,6 +425,10 @@ def autofix_cypher(cypher: str, log: logging.Logger | None = None) -> str:
         ("greater_than",            _fix_greater_than),
         ("fake_source_db",          _fix_fake_source_db),
         ("orderby_lost_var",        _fix_orderby_lost_var),
+        ("inline_is_not_null",      _fix_inline_is_not_null),
+        ("unaliased_with",          _fix_unaliased_with),
+        ("inline_comparison",       _fix_inline_comparison),
+        ("wrong_registered_at",     _fix_wrong_registered_at),
     ]
 
     for rule_name, fix_fn in fixes:
