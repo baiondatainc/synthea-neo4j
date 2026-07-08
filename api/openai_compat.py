@@ -27,15 +27,18 @@ router = APIRouter()
 
 
 # ── Chart detection ───────────────────────────────────────────────────────────
-
 def detect_chart(question: str, results: list) -> dict | None:
     """
     Inspects query results and decides whether a chart makes sense.
     Returns a chart spec dict or None.
 
-    Two-pass approach:
-      Pass 1 — find the first string key (label) and first numeric key (value)
-      Pass 2 — fallback: try float-casting remaining keys for numeric
+    Label key  — the x-axis: string preferred, integer accepted (year, month)
+    Numeric key — the y-axis: int/float, never the label key
+
+    Handles:
+      - String labels:  {"year_month": "2023-01", "review_count": 12}
+      - Integer labels: {"year": 2023, "review_count": 12}
+      - Float-cast:     {"year_month": "2023-01", "total": "1234.5"}
     """
     if not results or len(results) < 2:
         return None
@@ -44,14 +47,33 @@ def detect_chart(question: str, results: list) -> dict | None:
     label_key = None
     numeric_key = None
 
-    # Pass 1 — strict type check
+    # ── Pass 1: prefer a STRING key as label ─────────────────────────────
     for k, v in first.items():
         if isinstance(v, str) and label_key is None:
             label_key = k
-        if isinstance(v, (int, float)) and v >= 0 and numeric_key is None:
+        if isinstance(v, (int, float)) and numeric_key is None:
             numeric_key = k
 
-    # Pass 2 — float-cast fallback for numeric (skips the label key)
+    # ── Pass 1b: no string label found — accept first integer as label ───
+    # Handles: {"year": 2023, "count": 450} or {"month": 6, "total": 1200}
+    if label_key is None:
+        for k, v in first.items():
+            if isinstance(v, (int, float)):
+                label_key = k
+                break
+        # Reset numeric so we re-scan excluding the label key
+        numeric_key = None
+
+    # ── Pass 2: find numeric key (must differ from label_key) ────────────
+    if label_key is not None and numeric_key is None:
+        for k, v in first.items():
+            if k == label_key:
+                continue
+            if isinstance(v, (int, float)):
+                numeric_key = k
+                break
+
+    # ── Pass 3: float-cast fallback (handles stringified numbers) ────────
     if numeric_key is None:
         for k, v in first.items():
             if k == label_key:
@@ -63,59 +85,77 @@ def detect_chart(question: str, results: list) -> dict | None:
             except (TypeError, ValueError):
                 pass
 
-    if not numeric_key or not label_key:
+    if not label_key or not numeric_key:
         logger.warning(
             f"detect_chart: could not identify label+numeric keys. "
             f"Keys={list(first.keys())} Values={list(first.values())}"
         )
         return None
 
-    # Determine chart type from question keywords
+    # ── Chart type from question keywords ─────────────────────────────────
     q = question.lower()
-    if any(w in q for w in ["trend", "over time", "monthly", "yearly", "by year", "by month", "per year", "each year"]):
+    if any(w in q for w in [
+        "trend", "over time", "monthly", "yearly",
+        "by year", "by month", "per year", "each year",
+        "per month", "each month", "timeline", "over the years",
+    ]):
         chart_type = "line"
-    elif any(w in q for w in ["distribution", "breakdown", "proportion", "share", "gender", "race", "pie"]):
+    elif any(w in q for w in [
+        "distribution", "breakdown", "proportion", "share",
+        "gender", "race", "ethnicity", "pie", "split",
+    ]):
         chart_type = "pie"
     else:
         chart_type = "bar"
 
-    # Build data rows — cap labels at 35 chars for readability
+    # ── Build data rows ───────────────────────────────────────────────────
     data = []
     for r in results[:20]:
-        label = str(r.get(label_key, ""))[:35]
+        raw_label = r.get(label_key, "")
+        label = str(raw_label)[:35]
         try:
             value = float(r.get(numeric_key, 0))
         except (TypeError, ValueError):
-            value = 0
+            value = 0.0
         data.append({label_key: label, numeric_key: round(value, 2)})
 
-    # Reject chart if all rows share the same label — one-slice pie is misleading
+    # ── Guard: need at least 2 distinct labels ────────────────────────────
     unique_labels = len(set(row[label_key] for row in data))
     if unique_labels < 2:
         logger.info(
             f"detect_chart: only {unique_labels} unique label(s) — skipping chart. "
-            f"Check if the '{label_key}' property has diverse values in Neo4j."
+            f"Property '{label_key}' may lack diversity in Neo4j."
         )
         return None
 
-    # For line charts, reject if years look like birth years (pre-1990)
-    # This catches cases where e.start contains patient birthdate not encounter date
+    # ── Guard: reject birth-year ranges on line charts ────────────────────
+    # "2023-01" style strings are valid trends — only check pure year integers
     if chart_type == "line":
         try:
-            years = [int(row[label_key]) for row in data if row[label_key]]
-            if years and max(years) < 1990:
+            pure_years = []
+            for row in data:
+                val = row[label_key]
+                if isinstance(val, str):
+                    # Accept 4-digit year strings, skip "YYYY-MM" patterns
+                    if len(val) == 4 and val.isdigit():
+                        pure_years.append(int(val))
+                    # "YYYY-MM" or "YYYY-MM-DD" — valid trend label, skip check
+                elif isinstance(val, (int, float)):
+                    pure_years.append(int(val))
+
+            if pure_years and max(pure_years) < 1990:
                 logger.warning(
-                    f"detect_chart: year range {min(years)}-{max(years)} looks like "
-                    f"birth years not encounter dates — skipping chart. "
-                    f"Fix: check e.start property contains encounter date not patient birthdate."
+                    f"detect_chart: year range {min(pure_years)}-{max(pure_years)} "
+                    f"looks like birth years, not encounter/event dates — skipping chart. "
+                    f"Verify the query returns service/event dates, not patient DOB."
                 )
                 return None
         except (ValueError, TypeError):
             pass
 
     logger.info(
-        f"detect_chart: type={chart_type} label_key={label_key} "
-        f"numeric_key={numeric_key} rows={len(data)} unique_labels={unique_labels}"
+        f"detect_chart: type={chart_type} label_key={label_key!r} "
+        f"numeric_key={numeric_key!r} rows={len(data)} unique_labels={unique_labels}"
     )
 
     return {
@@ -143,114 +183,114 @@ def build_artifact(chart: dict) -> str:
     ctype = chart["type"]
     cid = uuid.uuid4().hex[:8]
 
-    # ── Always initialise jsx — prevents UnboundLocalError ────────────────
+        # ── Always initialise jsx — prevents UnboundLocalError ────────────────
     jsx = ""
 
     if ctype == "bar":
         jsx = f"""import {{ BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell }} from 'recharts';
 
-const data = {data_json};
-const COLORS = ['#63b3ed','#68d391','#f6ad55','#fc8181','#b794f4','#76e4f7'];
+    const data = {data_json};
+    const COLORS = ['#63b3ed','#68d391','#f6ad55','#fc8181','#b794f4','#76e4f7'];
 
-export default function Chart() {{
-  return (
-    <div style={{{{padding:'20px', background:'#1a1d2e', borderRadius:'12px', color:'#e2e8f0'}}}}>
-      <h3 style={{{{marginBottom:'16px', fontSize:'15px', color:'#e2e8f0'}}}}>{title}</h3>
-      <ResponsiveContainer width="100%" height={{380}}>
-        <BarChart data={{data}} margin={{{{top:5, right:20, left:10, bottom:100}}}}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#2d3748" />
-          <XAxis dataKey="{x}" tick={{{{fill:'#a0aec0', fontSize:11}}}} angle={{-40}} textAnchor="end" interval={{0}} />
-          <YAxis tick={{{{fill:'#a0aec0', fontSize:12}}}} />
-          <Tooltip contentStyle={{{{background:'#2d3748', border:'none', color:'#e2e8f0', borderRadius:'8px'}}}} />
-          <Bar dataKey="{y}" radius={{[4,4,0,0]}}>
-            {{data.map((_, i) => <Cell key={{i}} fill={{COLORS[i % COLORS.length]}} />)}}
-          </Bar>
-        </BarChart>
-      </ResponsiveContainer>
-    </div>
-  );
-}}"""
+    export default function Chart() {{
+    return (
+        <div style={{{{padding:'20px', background:'#1a1d2e', borderRadius:'12px', color:'#e2e8f0'}}}}>
+        <h3 style={{{{marginBottom:'16px', fontSize:'15px', color:'#e2e8f0'}}}}>{title}</h3>
+        <ResponsiveContainer width="100%" height={{380}}>
+            <BarChart data={{data}} margin={{{{top:5, right:20, left:10, bottom:100}}}}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#2d3748" />
+            <XAxis dataKey="{x}" tick={{{{fill:'#a0aec0', fontSize:11}}}} angle={{-40}} textAnchor="end" interval={{0}} />
+            <YAxis tick={{{{fill:'#a0aec0', fontSize:12}}}} />
+            <Tooltip contentStyle={{{{background:'#2d3748', border:'none', color:'#e2e8f0', borderRadius:'8px'}}}} />
+            <Bar dataKey="{y}" radius={{[4,4,0,0]}}>
+                {{data.map((_, i) => <Cell key={{i}} fill={{COLORS[i % COLORS.length]}} />)}}
+            </Bar>
+            </BarChart>
+        </ResponsiveContainer>
+        </div>
+    );
+    }}"""
 
-    elif ctype == "pie":
-        jsx = f"""import {{ PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer }} from 'recharts';
+        elif ctype == "pie":
+            jsx = f"""import {{ PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer }} from 'recharts';
 
-const data = {data_json};
-const COLORS = ['#63b3ed','#68d391','#f6ad55','#fc8181','#b794f4','#76e4f7','#fbb6ce','#90cdf4'];
+    const data = {data_json};
+    const COLORS = ['#63b3ed','#68d391','#f6ad55','#fc8181','#b794f4','#76e4f7','#fbb6ce','#90cdf4'];
 
-export default function Chart() {{
-  return (
-    <div style={{{{padding:'20px', background:'#1a1d2e', borderRadius:'12px', color:'#e2e8f0'}}}}>
-      <h3 style={{{{marginBottom:'16px', fontSize:'15px', color:'#e2e8f0'}}}}>{title}</h3>
-      <ResponsiveContainer width="100%" height={{380}}>
-        <PieChart>
-          <Pie data={{data}} dataKey="{y}" nameKey="{x}" cx="50%" cy="50%" outerRadius={{130}}
-            label={{({{name, percent}}) => name + ' ' + (percent*100).toFixed(0) + '%'}}
-            labelLine={{true}}>
-            {{data.map((_, i) => <Cell key={{i}} fill={{COLORS[i % COLORS.length]}} />)}}
-          </Pie>
-          <Tooltip contentStyle={{{{background:'#2d3748', border:'none', color:'#e2e8f0', borderRadius:'8px'}}}} />
-          <Legend wrapperStyle={{{{color:'#a0aec0'}}}} />
-        </PieChart>
-      </ResponsiveContainer>
-    </div>
-  );
-}}"""
+    export default function Chart() {{
+    return (
+        <div style={{{{padding:'20px', background:'#1a1d2e', borderRadius:'12px', color:'#e2e8f0'}}}}>
+        <h3 style={{{{marginBottom:'16px', fontSize:'15px', color:'#e2e8f0'}}}}>{title}</h3>
+        <ResponsiveContainer width="100%" height={{380}}>
+            <PieChart>
+            <Pie data={{data}} dataKey="{y}" nameKey="{x}" cx="50%" cy="50%" outerRadius={{130}}
+                label={{({{name, percent}}) => name + ' ' + (percent*100).toFixed(0) + '%'}}
+                labelLine={{true}}>
+                {{data.map((_, i) => <Cell key={{i}} fill={{COLORS[i % COLORS.length]}} />)}}
+            </Pie>
+            <Tooltip contentStyle={{{{background:'#2d3748', border:'none', color:'#e2e8f0', borderRadius:'8px'}}}} />
+            <Legend wrapperStyle={{{{color:'#a0aec0'}}}} />
+            </PieChart>
+        </ResponsiveContainer>
+        </div>
+    );
+    }}"""
 
-    elif ctype == "line":
-        jsx = f"""import {{ AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer }} from 'recharts';
+        elif ctype == "line":
+            jsx = f"""import {{ AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer }} from 'recharts';
 
-const data = {data_json};
+    const data = {data_json};
 
-export default function Chart() {{
-  return (
-    <div style={{{{padding:'20px', background:'#1a1d2e', borderRadius:'12px', color:'#e2e8f0'}}}}>
-      <h3 style={{{{marginBottom:'16px', fontSize:'15px', color:'#e2e8f0'}}}}>{title}</h3>
-      <ResponsiveContainer width="100%" height={{380}}>
-        <AreaChart data={{data}} margin={{{{top:10, right:20, left:10, bottom:60}}}}>
-          <defs>
-            <linearGradient id="colorVal" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stopColor="#63b3ed" stopOpacity={{0.3}} />
-              <stop offset="95%" stopColor="#63b3ed" stopOpacity={{0}} />
-            </linearGradient>
-          </defs>
-          <CartesianGrid strokeDasharray="3 3" stroke="#2d3748" />
-          <XAxis dataKey="{x}" tick={{{{fill:'#a0aec0', fontSize:11}}}} angle={{-35}} textAnchor="end" interval={{0}} />
-          <YAxis tick={{{{fill:'#a0aec0', fontSize:12}}}} />
-          <Tooltip contentStyle={{{{background:'#2d3748', border:'none', color:'#e2e8f0', borderRadius:'8px'}}}} />
-          <Area type="monotone" dataKey="{y}" stroke="#63b3ed" strokeWidth={{2}}
-            fill="url(#colorVal)" dot={{{{r:4, fill:'#63b3ed', stroke:'#1a1d2e', strokeWidth:2}}}} />
-        </AreaChart>
-      </ResponsiveContainer>
-    </div>
-  );
-}}"""
+    export default function Chart() {{
+    return (
+        <div style={{{{padding:'20px', background:'#1a1d2e', borderRadius:'12px', color:'#e2e8f0'}}}}>
+        <h3 style={{{{marginBottom:'16px', fontSize:'15px', color:'#e2e8f0'}}}}>{title}</h3>
+        <ResponsiveContainer width="100%" height={{380}}>
+            <AreaChart data={{data}} margin={{{{top:10, right:20, left:10, bottom:60}}}}>
+            <defs>
+                <linearGradient id="colorVal" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor="#63b3ed" stopOpacity={{0.3}} />
+                <stop offset="95%" stopColor="#63b3ed" stopOpacity={{0}} />
+                </linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" stroke="#2d3748" />
+            <XAxis dataKey="{x}" tick={{{{fill:'#a0aec0', fontSize:11}}}} angle={{-35}} textAnchor="end" interval={{0}} />
+            <YAxis tick={{{{fill:'#a0aec0', fontSize:12}}}} />
+            <Tooltip contentStyle={{{{background:'#2d3748', border:'none', color:'#e2e8f0', borderRadius:'8px'}}}} />
+            <Area type="monotone" dataKey="{y}" stroke="#63b3ed" strokeWidth={{2}}
+                fill="url(#colorVal)" dot={{{{r:4, fill:'#63b3ed', stroke:'#1a1d2e', strokeWidth:2}}}} />
+            </AreaChart>
+        </ResponsiveContainer>
+        </div>
+    );
+    }}"""
 
-    else:
-        # Unknown chart type — fall back to bar rather than crash
-        logger.warning(f"build_artifact: unknown chart type '{ctype}' — falling back to bar")
-        jsx = f"""import {{ BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell }} from 'recharts';
+        else:
+            # Unknown chart type — fall back to bar rather than crash
+            logger.warning(f"build_artifact: unknown chart type '{ctype}' — falling back to bar")
+            jsx = f"""import {{ BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell }} from 'recharts';
 
-const data = {data_json};
-const COLORS = ['#63b3ed','#68d391','#f6ad55','#fc8181','#b794f4','#76e4f7'];
+    const data = {data_json};
+    const COLORS = ['#63b3ed','#68d391','#f6ad55','#fc8181','#b794f4','#76e4f7'];
 
-export default function Chart() {{
-  return (
-    <div style={{{{padding:'20px', background:'#1a1d2e', borderRadius:'12px', color:'#e2e8f0'}}}}>
-      <h3 style={{{{marginBottom:'16px', fontSize:'15px', color:'#e2e8f0'}}}}>{title}</h3>
-      <ResponsiveContainer width="100%" height={{380}}>
-        <BarChart data={{data}} margin={{{{top:5, right:20, left:10, bottom:100}}}}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#2d3748" />
-          <XAxis dataKey="{x}" tick={{{{fill:'#a0aec0', fontSize:11}}}} angle={{-40}} textAnchor="end" interval={{0}} />
-          <YAxis tick={{{{fill:'#a0aec0', fontSize:12}}}} />
-          <Tooltip contentStyle={{{{background:'#2d3748', border:'none', color:'#e2e8f0', borderRadius:'8px'}}}} />
-          <Bar dataKey="{y}" radius={{[4,4,0,0]}}>
-            {{data.map((_, i) => <Cell key={{i}} fill={{COLORS[i % COLORS.length]}} />)}}
-          </Bar>
-        </BarChart>
-      </ResponsiveContainer>
-    </div>
-  );
-}}"""
+    export default function Chart() {{
+    return (
+        <div style={{{{padding:'20px', background:'#1a1d2e', borderRadius:'12px', color:'#e2e8f0'}}}}>
+        <h3 style={{{{marginBottom:'16px', fontSize:'15px', color:'#e2e8f0'}}}}>{title}</h3>
+        <ResponsiveContainer width="100%" height={{380}}>
+            <BarChart data={{data}} margin={{{{top:5, right:20, left:10, bottom:100}}}}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#2d3748" />
+            <XAxis dataKey="{x}" tick={{{{fill:'#a0aec0', fontSize:11}}}} angle={{-40}} textAnchor="end" interval={{0}} />
+            <YAxis tick={{{{fill:'#a0aec0', fontSize:12}}}} />
+            <Tooltip contentStyle={{{{background:'#2d3748', border:'none', color:'#e2e8f0', borderRadius:'8px'}}}} />
+            <Bar dataKey="{y}" radius={{[4,4,0,0]}}>
+                {{data.map((_, i) => <Cell key={{i}} fill={{COLORS[i % COLORS.length]}} />)}}
+            </Bar>
+            </BarChart>
+        </ResponsiveContainer>
+        </div>
+    );
+    }}"""
 
     # Safety guard — should never be empty after the blocks above
     if not jsx.strip():

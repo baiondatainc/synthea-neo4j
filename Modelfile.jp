@@ -131,7 +131,22 @@ RETURN datetime(c.service_date).year AS year,
        c.procedure_modality AS modality,
        count(c) AS charges
 ORDER BY year, charges DESC
-
+Q: Trend of Birdeye reviews by month
+MATCH (b:BirdeyeReview) WHERE b.date_posted IS NOT NULL
+RETURN toString(b.date_posted.year) + '-' + right('0' + toString(b.date_posted.month), 2) AS year_month,
+       count(b) AS review_count
+ORDER BY year_month
+Q: Monthly charge trend by year
+MATCH (c:Charge) WHERE c.service_date IS NOT NULL
+RETURN toString(c.service_date.year) + '-' + right('0' + toString(c.service_date.month), 2) AS year_month,
+       count(c) AS charge_count, sum(c.charge_amount) AS total_charged
+ORDER BY year_month
+Q: Annual payment trend
+MATCH (t:Transaction) WHERE t.post_date IS NOT NULL
+RETURN toString(t.post_date.year) AS year,
+       sum(t.payment_amount) AS total_payments,
+       count(t) AS transaction_count
+ORDER BY year
 Q: Patients who received statements but never made a transaction
 MATCH (p:Patient)-[:RECEIVED_STATEMENT]->(:Statement)
 WHERE NOT (p)-[:HAS_TRANSACTION]->(:Transaction)
