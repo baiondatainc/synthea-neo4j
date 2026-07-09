@@ -32,6 +32,41 @@ from guardrails import redact_text
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# chat title
+# ── Title-generation (bypasses KG pipeline, no charts) ────────────────────────
+
+def _is_title_request(body: dict, question: str) -> bool:
+    q = question.lower()
+    markers = (
+        "title for the conversation",
+        "concise, 5-word-or-less title",
+        "using title case",
+        "concise title",
+        "detected language",
+    )
+    return any(m in q for m in markers) or body.get("max_tokens", 9999) <= 30
+
+
+async def _generate_title(question: str, model: str) -> str:
+    """Short title via Ollama (llama3.2), echo fallback. No KG, no charts."""
+    import httpx
+    payload = {
+        "model": "llama3.2",
+        "messages": [{"role": "user", "content": question}],
+        "max_tokens": 16,
+        "stream": False,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.post(
+                "http://localhost:11434/v1/chat/completions", json=payload
+            )
+            data = r.json()
+            title = data["choices"][0]["message"]["content"].strip(' "\'.:\n')
+    except Exception as e:
+        logger.error(f"Title proxy failed: {e}")
+        title = question.strip().split("\n")[-1][:60].strip(' "\'.:') or "New Conversation"
+    return title or "New Conversation"
 
 # ── Chart detection ───────────────────────────────────────────────────────────
 
@@ -605,6 +640,22 @@ async def chat_completions(request: Request):
 
     if not question:
         return JSONResponse(status_code=400, content={"error": "No user message"})
+    
+    if _is_title_request(body, question):
+        logger.info("Title request detected — bypassing KG pipeline")
+        title = await _generate_title(question, model)
+        return JSONResponse(content={
+            "id": f"chatcmpl-{uuid.uuid4().hex}",
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": model,
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": title},
+                "finish_reason": "stop",
+            }],
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        })
 
     conversation_id = _extract_conversation_id(body, request)
     nocache  = request.query_params.get("nocache", "").lower() in ("1", "true", "yes")
@@ -620,14 +671,13 @@ async def chat_completions(request: Request):
 
 @router.get("/v1/models")
 async def list_models():
+    now = int(time.time())
     return {
         "object": "list",
-        "data": [{
-            "id":       "neo4j-kg",
-            "object":   "model",
-            "created":  int(time.time()),
-            "owned_by": "synthea-neo4j",
-        }],
+        "data": [
+            {"id": "radiologyPartner-kg", "object": "model", "created": now, "owned_by": "rp"},
+            {"id": "neo4j-kg",            "object": "model", "created": now, "owned_by": "synthea-neo4j"},
+        ],    
     }
 
 
