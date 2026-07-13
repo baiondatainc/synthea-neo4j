@@ -61,7 +61,7 @@ echo "Image:  ${FULL}"
 echo "Source: ${HERE}"
 
 if [[ $DRY_RUN -eq 1 ]]; then
-  echo "(dry-run) docker build -t ${FULL} ${HERE}"
+  echo "(dry-run) docker --no-cache -t ${FULL} ${HERE}"
   echo "(dry-run) docker push ${FULL}"
   exit 0
 fi

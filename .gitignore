@@ -63,3 +63,6 @@ runtime/
 unsloth_compiled_cache/
 gguf_export_v3/
 gguf_export_v3_gguf/
+lora_checkpoints
+/gguf_export_v3_gguf/
+scripts/gguf_export_v3_gguf
