@@ -10,6 +10,8 @@ Apply in qa/chain.py immediately after the model generates Cypher:
     cypher = autofix_cypher(cypher, logger)
 
 Fixes applied (in order):
+  0. Markdown fences → extract the query body:
+     ```cypher\\nMATCH ...\\n``` → MATCH ...
   1. SQL date functions → dot notation:  year(x) → x.year
   2. substring() on DateTime → dot notation: substring(t.post_date, 0, 4) → t.post_date.year
   3. GROUP BY removed (Cypher groups implicitly)
@@ -40,6 +42,29 @@ _NATIVE_DATETIME_PROPS = [
     "post_date", "service_date", "admit_date", "discharge_date",
     "dob", "call_datetime", "created_date", "released_date",
 ]
+
+# ── Fix 0: markdown fences → extract the query body ──────────────────────────
+# The text2cypher model wraps output in a ```cypher fenced block despite being
+# told not to. LangChain's own extractor mangled this (kept only the opening
+# ```), so we handle it here: if a COMPLETE fenced block is present, keep its
+# CONTENTS. Otherwise strip stray fence markers. Also drop a leading
+# "Generated Cypher:" / "Cypher:" label if one slipped through.
+_FENCE_BLOCK_RE = re.compile(r"```(?:cypher|sql)?\s*(.*?)```", re.IGNORECASE | re.DOTALL)
+_FENCE_MARKER_RE = re.compile(r"```(?:cypher|sql)?", re.IGNORECASE)
+_LABEL_RE = re.compile(r"^\s*(generated\s+)?cypher\s*:\s*", re.IGNORECASE)
+
+def _fix_code_fences(cypher: str) -> str:
+    # 1) Complete fenced block present → keep its body (the actual query).
+    m = _FENCE_BLOCK_RE.search(cypher)
+    if m and m.group(1).strip():
+        cypher = m.group(1)
+    else:
+        # 2) No complete block (or empty body) → strip stray fence markers.
+        cypher = _FENCE_MARKER_RE.sub("", cypher)
+    # 3) Drop a leading "Cypher:" / "Generated Cypher:" label if present.
+    cypher = _LABEL_RE.sub("", cypher)
+    return cypher.strip()
+
 
 # ── STRING date properties — substring() is correct, dot notation is WRONG ───
 _STRING_DATE_PROPS = [
@@ -416,6 +441,7 @@ def autofix_cypher(cypher: str, log: logging.Logger | None = None) -> str:
     original = cypher
 
     fixes = [
+        ("code_fences",             _fix_code_fences),   # ← must run FIRST (extracts body)
         ("sql_date_functions",      _fix_sql_date_functions),
         ("quarter_function",        _fix_quarter_function),
         ("date_trunc",              _fix_date_trunc),

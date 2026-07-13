@@ -14,6 +14,15 @@ Summary chart types per label:
   Charge      → charges by year (line) + by modality (bar)
   Transaction → payments by year (line)
   BirdeyeReview → rating distribution (bar)
+
+IMPORTANT (memory-persistence fix):
+  stream_qa_response() persists the conversation transcript in its Phase F block,
+  which runs AFTER it yields the "end" event. If this consumer `break`s on "end",
+  the async generator is suspended at that yield and never resumes — Phase F never
+  runs, and the transcript stays empty (breaking follow-up rewriting on the next
+  turn). We therefore `continue` on "end" and let the generator finish naturally.
+  Everything we render below (answer, cypher, charts) was already captured from
+  events that arrive before "end", so draining costs nothing.
 """
 import json
 import time
@@ -44,7 +53,9 @@ def _is_title_request(body: dict, question: str) -> bool:
         "concise title",
         "detected language",
     )
-    return any(m in q for m in markers) or body.get("max_tokens", 9999) <= 30
+    has_marker = any(m in q for m in markers)
+    tiny = body.get("max_tokens", 9999) <= 12
+    return has_marker or (tiny and len(q) <= 40 and "?" not in q)
 
 
 async def _generate_title(question: str, model: str) -> str:
@@ -482,6 +493,7 @@ async def generate_stream(
     rewritten_question = None
     cache_hit         = False
     summary_data      = None   # {"label": str, "data": dict}
+    saw_end           = False
 
     try:
         async for chunk in stream_qa_response(
@@ -512,7 +524,14 @@ async def generate_stream(
                 }
 
             elif t == "end":
-                break
+                # FIX: do NOT break here. stream_qa_response runs its Phase F
+                # memory-persist AFTER yielding "end"; breaking would suspend the
+                # generator at this yield and skip persistence, leaving the
+                # transcript empty and breaking follow-up rewriting next turn.
+                # Mark that we've seen the terminal event and keep draining so
+                # the generator finishes (it yields nothing further and returns).
+                saw_end = True
+                continue
 
             elif t == "blocked":
                 yield sse_chunk(f"⚠️ {chunk['data']}", model)
@@ -593,6 +612,8 @@ async def generate_stream(
                     logger.error(f"build_artifact (summary) failed: {e}", exc_info=True)
 
     # ── 4. Done ───────────────────────────────────────────────────────────
+    if not saw_end:
+        logger.warning("generate_stream: stream ended without an explicit 'end' event")
     yield sse_done()
 
 

@@ -1,0 +1,70 @@
+
+Show patients by age bucket who have outstanding balance over 2000
+
+The query generator produced invalid Cypher. Try rephrasing your question.
+
+Details: `The query generator produced invalid Cypher. Try rephrasing.
+
+Details: {neo4j_code: Neo.ClientError.Statement.SyntaxError} {message: Invalid input '``': expected 'FOREACH', 'ALTER', 'ORDER BY', 'CALL', 'USING PERIODIC COMMIT', 'CREATE', 'LOAD CSV', 'START DATABASE', 'STOP DATABASE', 'DEALLOCATE', 'D`
+
+
+Which patients have more than 5 calls but still have outstanding balance over 1000?
+
+
+
+
+
+The query generator produced invalid Cypher. Try rephrasing your question.
+
+Details: `The query generator produced invalid Cypher. Try rephrasing.
+
+Details: {neo4j_code: Neo.ClientError.Statement.SyntaxError} {message: Invalid input 'HAVING': expected 'FOREACH', ',', 'ORDER BY', 'CALL', 'CREATE', 'LOAD CSV', 'DELETE', 'DETACH', 'FINISH', 'INSERT', 'LIMIT', 'MATCH', 'MERGE', 'NODETACH`
+
+
+
+give me location wise patient count
+
+
+
+
+
+The query generator produced invalid Cypher. Try rephrasing your question.
+
+Details: `The query generator produced invalid Cypher. Try rephrasing.
+
+Details: {neo4j_code: Neo.ClientError.Statement.SyntaxError} {message: Type mismatch: p defined with conflicting type Node (expected Relationship) (line 1, column 45 (offset: 44))
+"MATCH (p:Patient)-[r:HAD_VISIT]->(v:Visit)-[p:PERFORMED_A`
+
+
+
+
+
+
+
+
+avatar
+give me patient count by location
+
+
+⚠️ The generated Cypher was rejected: Cypher references unknown relationship type(s): ['HAS_VISIT']. Try rephrasing.
+
+
+The query generator produced invalid Cypher. Try rephrasing your question.
+
+Details: `The query generator produced invalid Cypher. Try rephrasing.
+
+Details: {neo4j_code: Neo.ClientError.Statement.SyntaxError} {message: Type mismatch: p defined with conflicting type Node (expected Relationship) (line 1, column 45 (offset: 44))
+"MATCH (p:Patient)-[r:HAD_VISIT]->(v:Visit)-[p:PERFORMED_A`
+
+-- Basic segmentation testing.
+--- 3.2 Million Records - unique
+--- 
+
+
+
+
+
+
+
+
+
