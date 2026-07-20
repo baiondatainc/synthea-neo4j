@@ -23,12 +23,35 @@ IMPORTANT (memory-persistence fix):
   turn). We therefore `continue` on "end" and let the generator finish naturally.
   Everything we render below (answer, cypher, charts) was already captured from
   events that arrive before "end", so draining costs nothing.
+
+CHART-DETECTION REWRITE (this version):
+  The old detect_chart picked label_key = first string column and
+  numeric_key = FIRST numeric column. Two failure modes:
+    1. `year, month, visit_count` (no strings) → charted month vs YEAR and
+       ignored the measure entirely.
+    2. `state, year, month, visit_count` → x = state, y = YEAR — the flat
+       "$2.0K" line was literally the year 2025/1000 with dollar formatting.
+  Fixes in this version:
+    - Time columns (year/month/quarter/...) are recognised and merged into a
+      single sortable "period" x-axis label ("2025-11", "2025-Q3", "2025").
+    - The y-axis is the MEASURE column (count/total/amount/... hints, else the
+      last numeric non-time column) — never a time column.
+    - A leftover category column alongside time columns (e.g. state) becomes a
+      multi-series line chart (top 8 categories by total, one line each).
+    - "$" formatting only applies when the y column name looks monetary
+      (amount/paid/balance/...). Counts render as plain numbers.
+    - isMonthLabel regex fixed — it previously reached the browser as
+      /^\\d{{4}}-\\d{{2}}$/ (invalid) because fmt_fn is a plain string whose
+      doubled braces were never consumed by an f-string.
+    - Line charts keep up to 60 points (multi-year monthly trends); bar/pie
+      keep the original 20.
 """
 import json
 import time
 import uuid
 import logging
 import asyncio
+from collections import OrderedDict
 from typing import AsyncGenerator
 
 from fastapi import APIRouter, Request
@@ -79,104 +102,194 @@ async def _generate_title(question: str, model: str) -> str:
         title = question.strip().split("\n")[-1][:60].strip(' "\'.:') or "New Conversation"
     return title or "New Conversation"
 
+
 # ── Chart detection ───────────────────────────────────────────────────────────
+
+_TIME_KEYS = {"year", "month", "quarter", "year_month", "yearmonth", "period",
+              "date", "week", "day"}
+
+_MONEY_HINTS = ("amount", "charged", "charge", "paid", "payment", "payments",
+                "balance", "outstanding", "debt", "revenue", "cost", "adjust",
+                "allowed", "deductible", "copay", "co_pay", "coinsurance")
+
+_MEASURE_HINTS = _MONEY_HINTS + ("count", "total", "sum", "avg", "average",
+                                 "num_", "patients", "visits", "charges",
+                                 "calls", "reviews", "transactions", "rating")
+
+_LINE_POINT_CAP = 60   # multi-year monthly trends need > 20 points
+_BAR_POINT_CAP = 20
+_MAX_SERIES = 8        # cap category breakdown lines
+
+
+def _is_money_key(key: str) -> bool:
+    k = (key or "").lower()
+    return any(h in k for h in _MONEY_HINTS)
+
+
+def _is_numeric(v) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def _time_label(row: dict, time_keys: list) -> str:
+    """Build a sortable x-axis label from whatever time columns are present."""
+    lk = {k.lower(): k for k in time_keys}
+    if "year" in lk and "month" in lk:
+        y = row.get(lk["year"])
+        m = row.get(lk["month"])
+        try:
+            return f"{int(y)}-{int(m):02d}"
+        except (TypeError, ValueError):
+            return f"{y}-{m}"
+    if "year" in lk and "quarter" in lk:
+        return f"{row.get(lk['year'])}-Q{row.get(lk['quarter'])}"
+    # single time column (year, year_month, date, ...)
+    return str(row.get(time_keys[0], ""))
+
+
+def _pivot_series(results: list, time_keys: list, series_key: str,
+                  y_key: str) -> tuple:
+    """Pivot long rows (period, category, value) into wide multi-series rows.
+
+    Returns (data, series_names):
+      data = [{"period": "2025-11", "TX": 12, "AZ": 9}, ...]
+    Categories beyond the top-_MAX_SERIES by total are dropped.
+    """
+    totals: dict = {}
+    for r in results:
+        s = str(r.get(series_key, ""))[:25]
+        try:
+            totals[s] = totals.get(s, 0.0) + float(r.get(y_key) or 0)
+        except (TypeError, ValueError):
+            continue
+    top = [s for s, _ in sorted(totals.items(), key=lambda kv: -kv[1])[:_MAX_SERIES]]
+    top_set = set(top)
+
+    rows: "OrderedDict[str, dict]" = OrderedDict()
+    for r in results:
+        s = str(r.get(series_key, ""))[:25]
+        if s not in top_set:
+            continue
+        x = _time_label(r, time_keys)
+        row = rows.setdefault(x, {"period": x})
+        try:
+            row[s] = round(float(r.get(y_key) or 0), 2)
+        except (TypeError, ValueError):
+            row[s] = 0.0
+
+    data = list(rows.values())[:_LINE_POINT_CAP]
+    return data, top
+
 
 def detect_chart(question: str, results: list) -> dict | None:
     if not results or len(results) < 2:
         return None
 
     first = results[0]
-    label_key = None
-    numeric_key = None
+    keys = list(first.keys())
 
-    for k, v in first.items():
-        if isinstance(v, str) and label_key is None:
-            label_key = k
-        if isinstance(v, (int, float)) and numeric_key is None:
-            numeric_key = k
+    time_keys = [k for k in keys if k.lower() in _TIME_KEYS]
+    numeric_keys = [k for k in keys if _is_numeric(first.get(k))]
+    string_keys = [k for k in keys if isinstance(first.get(k), str)]
 
-    if label_key is None:
-        for k, v in first.items():
-            if isinstance(v, (int, float)):
-                label_key = k
-                break
-        numeric_key = None
+    # ── y-axis: the measure column, never a time column ──────────────────
+    measure_candidates = [k for k in numeric_keys if k.lower() not in _TIME_KEYS]
+    y_key = None
+    for k in measure_candidates:
+        if any(h in k.lower() for h in _MEASURE_HINTS):
+            y_key = k
+            break
+    if y_key is None and measure_candidates:
+        y_key = measure_candidates[-1]   # last column is usually the aggregate
+    if y_key is None:
+        return None                       # nothing to plot
 
-    if label_key is not None and numeric_key is None:
-        for k, v in first.items():
-            if k == label_key:
-                continue
-            if isinstance(v, (int, float)):
-                numeric_key = k
-                break
+    is_money = _is_money_key(y_key)
 
-    if numeric_key is None:
-        for k, v in first.items():
-            if k == label_key:
-                continue
-            try:
-                float(v)
-                numeric_key = k
-                break
-            except (TypeError, ValueError):
-                pass
-
-    if not label_key or not numeric_key:
-        return None
-
+    # ── chart type ────────────────────────────────────────────────────────
     q = question.lower()
-    if any(w in q for w in ["trend", "over time", "monthly", "yearly", "by year",
-                              "by month", "per year", "each year", "per month",
-                              "each month", "timeline", "over the years"]):
+    trend_words = ("trend", "over time", "monthly", "yearly", "by year",
+                   "by month", "per year", "each year", "per month",
+                   "each month", "timeline", "over the years", "growth")
+    dist_words = ("distribution", "breakdown", "proportion", "share",
+                  "gender", "race", "ethnicity", "pie", "split")
+
+    if time_keys or any(w in q for w in trend_words):
         chart_type = "line"
-    elif any(w in q for w in ["distribution", "breakdown", "proportion", "share",
-                                "gender", "race", "ethnicity", "pie", "split"]):
+    elif any(w in q for w in dist_words):
         chart_type = "pie"
     else:
         chart_type = "bar"
 
-    data = []
-    for r in results[:20]:
-        raw_label = r.get(label_key, "")
-        label = str(raw_label)[:35]
-        try:
-            value = float(r.get(numeric_key, 0))
-        except (TypeError, ValueError):
-            value = 0.0
-        data.append({label_key: label, numeric_key: round(value, 2)})
+    title = question[:70] + ("..." if len(question) > 70 else "")
 
-    unique_labels = len(set(row[label_key] for row in data))
-    if unique_labels < 2:
+    # ── Case 1: time series ───────────────────────────────────────────────
+    if time_keys and chart_type == "line":
+        # a leftover string column (e.g. state) = category → multi-series
+        series_key = string_keys[0] if string_keys else None
+
+        if series_key:
+            data, series = _pivot_series(results, time_keys, series_key, y_key)
+            if len(data) < 2 or not series:
+                return None
+            logger.info(
+                f"detect_chart: multi-series line — x=period, y={y_key!r}, "
+                f"series={series_key!r} ({len(series)}), points={len(data)}"
+            )
+            return {
+                "type": "line", "title": title, "data": data,
+                "x_key": "period", "y_key": y_key,
+                "series": series, "is_money": is_money,
+            }
+
+        # single series over time
+        data = []
+        for r in results[:_LINE_POINT_CAP]:
+            try:
+                val = round(float(r.get(y_key) or 0), 2)
+            except (TypeError, ValueError):
+                val = 0.0
+            data.append({"period": _time_label(r, time_keys), y_key: val})
+        if len({row["period"] for row in data}) < 2:
+            return None
+        logger.info(f"detect_chart: line — x=period, y={y_key!r}, points={len(data)}")
+        return {
+            "type": "line", "title": title, "data": data,
+            "x_key": "period", "y_key": y_key, "is_money": is_money,
+        }
+
+    # ── Case 2: categorical (bar / pie) ───────────────────────────────────
+    label_key = string_keys[0] if string_keys else None
+    if label_key is None:
+        # numeric label (e.g. plain year column with no trend wording)
+        label_candidates = [k for k in numeric_keys if k != y_key]
+        label_key = label_candidates[0] if label_candidates else None
+    if label_key is None:
         return None
 
-    if chart_type == "line":
+    data = []
+    for r in results[:_BAR_POINT_CAP]:
+        label = str(r.get(label_key, ""))[:35]
         try:
-            pure_years = []
-            for row in data:
-                val = row[label_key]
-                if isinstance(val, str):
-                    if len(val) == 4 and val.isdigit():
-                        pure_years.append(int(val))
-                elif isinstance(val, (int, float)):
-                    pure_years.append(int(val))
-            if pure_years and max(pure_years) < 1990:
-                return None
-        except (ValueError, TypeError):
-            pass
+            val = round(float(r.get(y_key) or 0), 2)
+        except (TypeError, ValueError):
+            val = 0.0
+        data.append({label_key: label, y_key: val})
 
-    logger.info(f"detect_chart: type={chart_type} label={label_key!r} numeric={numeric_key!r} rows={len(data)}")
+    if len({row[label_key] for row in data}) < 2:
+        return None
+
+    logger.info(
+        f"detect_chart: {chart_type} — label={label_key!r}, y={y_key!r}, rows={len(data)}"
+    )
     return {
-        "type":  chart_type,
-        "title": question[:70] + ("..." if len(question) > 70 else ""),
-        "data":  data,
-        "x_key": label_key,
-        "y_key": numeric_key,
+        "type": chart_type, "title": title, "data": data,
+        "x_key": label_key, "y_key": y_key, "is_money": is_money,
     }
 
 
 # ── Summary chart builder ─────────────────────────────────────────────────────
 
-def _summary_charts(label: str, data: dict) -> list[dict]:
+def _summary_charts(label: str, data: dict) -> list:
     """
     Extract chart-ready row lists from aggregate summary data.
     Returns a list of chart spec dicts (one per chart to render).
@@ -332,6 +445,7 @@ def _build_summary_chart(spec: dict) -> dict | None:
         "data":  rows,
         "x_key": x_key,
         "y_key": y_key,
+        # is_money intentionally omitted — build_artifact infers it from y_key.
     }
 
 
@@ -343,19 +457,26 @@ def build_artifact(chart: dict) -> str:
     y     = chart["y_key"]
     title = chart["title"].replace('"', '\\"')
     ctype = chart["type"]
+    series = chart.get("series") or []
+    is_money = chart.get("is_money", _is_money_key(y))
     cid   = uuid.uuid4().hex[:8]
 
     jsx = ""
 
     # ── Value formatter (shared across chart types) ───────────────────────
+    # Plain string (NOT an f-string) — single braces reach the browser intact.
+    # IS_MONEY is substituted below; "$" only shows for monetary y columns.
     fmt_fn = """
+const IS_MONEY = __IS_MONEY__;
 const formatValue = (v) => {
   if (v === null || v === undefined) return '';
   const n = parseFloat(v);
   if (isNaN(n)) return v;
-  if (n >= 1_000_000) return '$' + (n / 1_000_000).toFixed(1) + 'M';
-  if (n >= 1_000)     return '$' + (n / 1_000).toFixed(1) + 'K';
-  return n.toLocaleString();
+  let out;
+  if (Math.abs(n) >= 1_000_000) out = (n / 1_000_000).toFixed(1) + 'M';
+  else if (Math.abs(n) >= 1_000) out = (n / 1_000).toFixed(1) + 'K';
+  else out = n.toLocaleString();
+  return IS_MONEY ? '$' + out : out;
 };
 const formatMonth = (val) => {
   if (!val || !String(val).includes('-')) return val;
@@ -363,13 +484,15 @@ const formatMonth = (val) => {
   const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   return (months[parseInt(m, 10) - 1] || m) + ' ' + y;
 };
-const isMonthLabel = (val) => val && String(val).match(/^\\d{{4}}-\\d{{2}}$/);
-"""
+const isMonthLabel = (val) => val && String(val).match(/^\\d{4}-\\d{2}$/);
+""".replace("__IS_MONEY__", "true" if is_money else "false")
+
+    COLORS_JS = "const COLORS = ['#63b3ed','#68d391','#f6ad55','#fc8181','#b794f4','#76e4f7','#fbb6ce','#90cdf4'];"
 
     if ctype == "bar":
         jsx = f"""import {{ BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell }} from 'recharts';
 const data = {data_json};
-const COLORS = ['#63b3ed','#68d391','#f6ad55','#fc8181','#b794f4','#76e4f7','#fbb6ce','#90cdf4'];
+{COLORS_JS}
 {fmt_fn}
 export default function Chart() {{
   return (
@@ -394,7 +517,7 @@ export default function Chart() {{
     elif ctype == "pie":
         jsx = f"""import {{ PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer }} from 'recharts';
 const data = {data_json};
-const COLORS = ['#63b3ed','#68d391','#f6ad55','#fc8181','#b794f4','#76e4f7','#fbb6ce','#90cdf4'];
+{COLORS_JS}
 {fmt_fn}
 export default function Chart() {{
   return (
@@ -411,6 +534,41 @@ export default function Chart() {{
             contentStyle={{{{background:'#2d3748', border:'none', color:'#e2e8f0', borderRadius:'8px'}}}} />
           <Legend wrapperStyle={{{{color:'#a0aec0'}}}} />
         </PieChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}}"""
+
+    elif ctype == "line" and series:
+        # Multi-series trend (e.g. visit trends by state) — one line per category.
+        series_json = json.dumps(series, ensure_ascii=False)
+        jsx = f"""import {{ LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer }} from 'recharts';
+const data = {data_json};
+const SERIES = {series_json};
+{COLORS_JS}
+{fmt_fn}
+export default function Chart() {{
+  const useMonthFmt = data.length > 0 && isMonthLabel(data[0]['{x}']);
+  return (
+    <div style={{{{padding:'20px', background:'#1a1d2e', borderRadius:'12px', color:'#e2e8f0'}}}}>
+      <h3 style={{{{marginBottom:'16px', fontSize:'15px', color:'#e2e8f0'}}}}>{title}</h3>
+      <ResponsiveContainer width="100%" height={{420}}>
+        <LineChart data={{data}} margin={{{{top:10, right:30, left:20, bottom:60}}}}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#2d3748" />
+          <XAxis dataKey="{x}"
+            tickFormatter={{useMonthFmt ? formatMonth : (v => v)}}
+            tick={{{{fill:'#a0aec0', fontSize:11}}}} angle={{-35}} textAnchor="end" />
+          <YAxis tickFormatter={{formatValue}} tick={{{{fill:'#a0aec0', fontSize:12}}}} width={{70}} />
+          <Tooltip
+            labelFormatter={{useMonthFmt ? formatMonth : (v => v)}}
+            formatter={{(v, name) => [formatValue(v), name]}}
+            contentStyle={{{{background:'#2d3748', border:'none', color:'#e2e8f0', borderRadius:'8px'}}}} />
+          <Legend wrapperStyle={{{{color:'#a0aec0'}}}} />
+          {{SERIES.map((s, i) => (
+            <Line key={{s}} type="monotone" dataKey={{s}} stroke={{COLORS[i % COLORS.length]}}
+              strokeWidth={{2}} dot={{{{r:3}}}} connectNulls />
+          ))}}
+        </LineChart>
       </ResponsiveContainer>
     </div>
   );
@@ -436,7 +594,7 @@ export default function Chart() {{
           <CartesianGrid strokeDasharray="3 3" stroke="#2d3748" />
           <XAxis dataKey="{x}"
             tickFormatter={{useMonthFmt ? formatMonth : (v => v)}}
-            tick={{{{fill:'#a0aec0', fontSize:11}}}} angle={{-35}} textAnchor="end" interval={{0}} />
+            tick={{{{fill:'#a0aec0', fontSize:11}}}} angle={{-35}} textAnchor="end" />
           <YAxis tickFormatter={{formatValue}} tick={{{{fill:'#a0aec0', fontSize:12}}}} width={{70}} />
           <Tooltip
             labelFormatter={{useMonthFmt ? formatMonth : (v => v)}}
@@ -661,7 +819,7 @@ async def chat_completions(request: Request):
 
     if not question:
         return JSONResponse(status_code=400, content={"error": "No user message"})
-    
+
     if _is_title_request(body, question):
         logger.info("Title request detected — bypassing KG pipeline")
         title = await _generate_title(question, model)
@@ -698,7 +856,7 @@ async def list_models():
         "data": [
             {"id": "radiologyPartner-kg", "object": "model", "created": now, "owned_by": "rp"},
             {"id": "neo4j-kg",            "object": "model", "created": now, "owned_by": "synthea-neo4j"},
-        ],    
+        ],
     }
 
 
