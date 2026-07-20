@@ -34,6 +34,7 @@ import sys
 import urllib.request
 from pathlib import Path
 from typing import Optional
+from prompt import SYSTEM_PROMPT
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -45,49 +46,7 @@ logging.getLogger("transformers").setLevel(logging.ERROR)
 logging.getLogger("unsloth").setLevel(logging.ERROR)
 
 
-# ── System prompt — identical to train_lora.py ────────────────────────────────
-SYSTEM_PROMPT = """You are a Neo4j Cypher generator for the RP (RP) knowledge graph.
-Output ONLY raw Cypher. No markdown. No explanations. ALWAYS include LIMIT. Alias every property.
 
-Labels: Patient, Visit, Charge, Transaction, Statement, RCCall, IVRInbound,
-        DiallerCall, PhoneBridge, Campaign, Location, InsurancePlan,
-        Practice, DiagnosisCode, ProcedureCode, BirdeyeReview
-
-EXACT properties:
-Patient:      patient_id, source_db, gender, state, payor_cohort, call_tier,
-              propensity_grade, is_self_pay, is_friction, is_tennessee,
-              outstanding_balance, total_charged, total_paid, adj_bad_debt
-Charge:       charge_id, charge_amount, balance, line_status, dos_aging_bucket,
-              procedure_modality, procedure_code, is_voided, is_hold,
-              current_responsible_level, service_date, post_date
-Transaction:  payment_id, transaction_type, paysource, payment_method,
-              payment_amount, adjustment_amount, adjustment_bucket, denial_code
-RCCall:       rccallId, agent_name, team_name, skill_name, campaign_name,
-              sla, agent_time, total_time, in_queue, disp_name, rc_attributable
-IVRInbound:   response_id, ivr_type, amount_paid, balance, result_desc, call_datetime
-DiallerCall:  account, result_desc, patient_balance, service_loc, call_datetime
-Statement:    statement_id, statement_level, patient_balance, total_balance,
-              is_on_hold, is_released, text_successful, email_successful
-Location:     location_id, name, city, state, birdeye_avg_rating, birdeye_review_count
-PhoneBridge:  phone_type, primary_campaign, rc_call_count, campaign_count
-InsurancePlan: plan_name, carrier_name, plan_type, plan_number
-Visit:        visit_id, source_db, admit_date, primary_insurance_plan
-Campaign:     name  DiagnosisCode: code  ProcedureCode: code, description, modality
-BirdeyeReview: rating, phi_flagged, source  Practice: code
-
-Relationships:
-(Patient)-[:HAD_VISIT]->(Visit)  (Patient)-[:HAS_CHARGE]->(Charge)
-(Patient)-[:HAS_TRANSACTION]->(Transaction)  (Patient)-[:RECEIVED_STATEMENT]->(Statement)
-(Patient)-[:IDENTIFIED_BY_PHONE]->(PhoneBridge)  (Patient)-[:CALLED_IVR]->(IVRInbound)
-(Patient)-[:CONTACTED_BY_DIALLER]->(DiallerCall)  (Patient)-[:REGISTERED_AT]->(Practice)
-(Transaction)-[:SETTLES]->(Charge)  (RCCall)-[:ATTRIBUTED_TO_PHONE]->(PhoneBridge)
-(RCCall)-[:PART_OF_CAMPAIGN]->(Campaign)  (Charge)-[:AT_LOCATION]->(Location)
-(Charge)-[:DIAGNOSED_WITH]->(DiagnosisCode)  (Charge)-[:USES_PROCEDURE]->(ProcedureCode)
-(Charge)-[:PART_OF_VISIT]->(Visit)  (Visit)-[:PERFORMED_AT]->(Location)
-(Visit)-[:UNDER_PLAN]->(InsurancePlan)  (Location)-[:BELONGS_TO_PRACTICE]->(Practice)
-(BirdeyeReview)-[:REVIEWS]->(Location)
-
-"""
 
 # ── Safety ────────────────────────────────────────────────────────────────────
 WRITE_RE    = re.compile(r"\b(CREATE|MERGE|SET|DELETE|REMOVE|DROP|DETACH)\b", re.I)

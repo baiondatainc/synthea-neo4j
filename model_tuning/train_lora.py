@@ -1,23 +1,29 @@
 #!/usr/bin/env python3
 """
-train_lora.py  v5  — aligned with Modelfile.jp (2026-07-07)
+train_lora.py  v6  — aligned with Modelfile.qwen3-4b (2026-07)
 ─────────────────────────────────────────────────────────────
-Fine-tunes Qwen2.5-Coder-7B-Instruct for RP Text2Cypher.
+Fine-tunes Qwen3-4B-Instruct-2507 for RP Text2Cypher.
 
-Why Qwen2.5-Coder over Gemma 2 9B:
-  - Matches the production Ollama model (text2cypher is built on qwen2.5-coder:7b)
-  - Specifically trained on code/query generation
-  - Smaller (7B vs 9B) → faster training and inference
-  - Better at structured output without hallucinating property names
+Why Qwen3-4B-Instruct-2507 over Qwen2.5-Coder-7B:
+  - Matches the NEW production Ollama model (Modelfile.qwen3-4b,
+    FROM qwen3:4b-instruct-2507-q4_K_M)
+  - Non-thinking instruct variant → same plain ChatML template, no <think>
+  - Smaller (4B vs 7B) → faster training, faster CPU inference in Ollama
 
-Why this version will converge (fixes vs v1-v4):
-  1. Correct base model — Qwen2.5-Coder, same as Ollama production
-  2. Correct property names — exactly from data_catalog.yaml and Modelfile.jp
-     (previous versions used wrong names like c.amount, c.agent, iv.amount_collected)
-  3. DataCollatorForCompletionOnlyLM — loss computed only on Cypher answer tokens
-     (previous versions computed loss on full 2000+ token prompt → loss=20)
-  4. System prompt fits in context — 2324 tokens, 1722 headroom for Q+Cypher
-  5. Qwen ChatML format — <|im_start|>user / <|im_start|>assistant
+Changes vs v5:
+  1. Base model → Qwen3-4B-Instruct-2507 (was Qwen2.5-Coder-7B)
+  2. LORA_BASE_MODEL is now actually IMPORTED from prompt.py
+     (v5 referenced it without importing — NameError at runtime)
+  3. SYSTEM_PROMPT comes from Modelfile.qwen3-4b via prompt.py — the full
+     ~7-8k token production prompt, so --max-seq-length default is now 10240
+     (was 4096, which cannot fit the real system prompt)
+  4. Chat template: prefer the tokenizer's native Qwen3 ChatML; fatal check
+     that no <think> block appears in formatted examples (would mean the
+     wrong/thinking base model was loaded)
+  5. check_pair: LIMIT only required for NON-aggregate queries — the
+     Modelfile's own examples ("How many patients?") have no LIMIT and are
+     correct; v5 would have dropped them from training data
+  6. Deploy instructions point at Modelfile.qwen3-4b / text2cypher-q3-ft
 
 Expected loss:
   Smoke test (50 rows, 3 steps): 2-5  (not converged, just verifies format)
@@ -32,18 +38,17 @@ Usage:
         --output-dir ./lora_smoke_test \\
         --num-epochs 1 --smoke-test --skip-gguf
 
-    # Full training (~25 min on RTX 4500):
+    # Full training:
     python scripts/train_lora.py \\
         --train-data data/splits/train.parquet \\
         --val-data   data/splits/val.parquet \\
-        --output-dir ./lora_adapter_v3
+        --output-dir ./lora_adapter_q3_v1
 """
 
 import unsloth  # noqa: F401 — must be FIRST
 
 import argparse
 import os
-import re
 import sys
 from pathlib import Path
 from datetime import datetime
@@ -52,6 +57,14 @@ import torch
 import pandas as pd
 from datasets import Dataset
 from trl import SFTTrainer, SFTConfig
+from prompt import (
+    SYSTEM_PROMPT,
+    RESPONSE_TEMPLATE,
+    WRITE_RE,
+    WRONG_PROPS,
+    AGG_RE,
+    LORA_BASE_MODEL,   # ← v5 used this without importing it
+)
 
 # DataCollatorForCompletionOnlyLM moved between trl and transformers across versions
 try:
@@ -62,7 +75,7 @@ except ImportError:
     except ImportError:
         # Implement a minimal version inline if neither works
         from transformers import DataCollatorForLanguageModeling
-        import torch
+
         class DataCollatorForCompletionOnlyLM(DataCollatorForLanguageModeling):
             def __init__(self, response_template, tokenizer, *args, **kwargs):
                 super().__init__(tokenizer=tokenizer, mlm=False, *args, **kwargs)
@@ -71,17 +84,14 @@ except ImportError:
 
             def torch_call(self, examples):
                 batch = super().torch_call(examples)
-                # Mask prompt tokens — set labels to -100 for everything before response
                 for i, label in enumerate(batch["labels"]):
-                    # Find response template in input_ids
                     input_ids = batch["input_ids"][i].tolist()
                     tmpl = self.response_token_ids
                     for j in range(len(input_ids) - len(tmpl) + 1):
-                        if input_ids[j:j+len(tmpl)] == tmpl:
-                            batch["labels"][i, :j+len(tmpl)] = -100
+                        if input_ids[j:j + len(tmpl)] == tmpl:
+                            batch["labels"][i, :j + len(tmpl)] = -100
                             break
                     else:
-                        # Template not found — mask everything (skip this example)
                         batch["labels"][i] = torch.full_like(label, -100)
                 return batch
 
@@ -92,95 +102,17 @@ from unsloth import FastLanguageModel
 from unsloth.chat_templates import get_chat_template
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# BASE MODEL  — Qwen2.5-Coder-7B-Instruct (matches Ollama production model)
-# ─────────────────────────────────────────────────────────────────────────────
-
-LORA_BASE_MODEL = "Qwen/Qwen2.5-Coder-7B-Instruct"
-
-# Qwen ChatML response template — loss computed only on tokens after this
-RESPONSE_TEMPLATE = "<|im_start|>assistant\n"
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# SYSTEM PROMPT
-# Aligned with Modelfile.jp — uses EXACT same property names.
-# Compact version (~2324 tokens) to fit in 4096 context with headroom.
-# MUST be identical in train_lora.py, eval_runner.py, demo_ollama.py.
-# ─────────────────────────────────────────────────────────────────────────────
-
-SYSTEM_PROMPT = """You are a Neo4j Cypher generator for the RP (RP) knowledge graph.
-Output ONLY raw Cypher. No markdown. No explanations. ALWAYS include LIMIT. Alias every property.
-
-Labels: Patient, Visit, Charge, Transaction, Statement, RCCall, IVRInbound,
-        DiallerCall, PhoneBridge, Campaign, Location, InsurancePlan,
-        Practice, DiagnosisCode, ProcedureCode, BirdeyeReview
-
-EXACT properties (use ONLY these names):
-Patient:      patient_id, source_db, gender, state, city, zip, dob
-              payor_cohort, call_tier, propensity_grade
-              is_self_pay, is_friction, is_tennessee, is_bai, is_fully_covered
-              outstanding_balance, total_charged, total_paid, adj_bad_debt
-              has_insurance, carrier_name, plan_name, plan_type
-Charge:       charge_id, charge_amount, balance, line_status, dos_aging_bucket
-              procedure_modality, procedure_code, is_voided, is_hold
-              current_responsible_level, service_date, post_date, source_db
-Transaction:  payment_id, transaction_type, paysource, payment_method
-              payment_amount, adjustment_amount, adjustment_bucket
-              denial_code, denial_note, post_date
-RCCall:       rccallId, agent_name, team_name, skill_name, campaign_name
-              sla, agent_time, total_time, in_queue, acw_time, disp_name
-              rc_attributable, start_date
-IVRInbound:   response_id, ivr_type, amount_paid, balance, result_desc
-              call_datetime, call_duration, auth_success
-DiallerCall:  account, result_desc, patient_balance, service_loc, call_datetime
-Statement:    statement_id, statement_level, patient_balance, total_balance
-              is_on_hold, is_released, text_successful, email_successful
-Location:     location_id, name, city, state, zip, source_db
-              birdeye_avg_rating, birdeye_review_count, birdeye_one_star_pct
-PhoneBridge:  phone_type, primary_campaign, rc_call_count, campaign_count
-InsurancePlan: plan_name, carrier_name, plan_type, plan_number, source_db
-Visit:        visit_id, source_db, admit_date, discharge_date
-              location_id, primary_insurance_plan
-Campaign:     name  DiagnosisCode: code  ProcedureCode: code, description, modality
-BirdeyeReview: rating, phi_flagged, source  Practice: code
-
-Relationships:
-(Patient)-[:HAD_VISIT]->(Visit)  (Patient)-[:HAS_CHARGE]->(Charge)
-(Patient)-[:HAS_TRANSACTION]->(Transaction)  (Patient)-[:RECEIVED_STATEMENT]->(Statement)
-(Patient)-[:IDENTIFIED_BY_PHONE]->(PhoneBridge)  (Patient)-[:CALLED_IVR]->(IVRInbound)
-(Patient)-[:CONTACTED_BY_DIALLER]->(DiallerCall)  (Patient)-[:REGISTERED_AT]->(Practice)
-(Transaction)-[:SETTLES]->(Charge)  (RCCall)-[:ATTRIBUTED_TO_PHONE]->(PhoneBridge)
-(RCCall)-[:PART_OF_CAMPAIGN]->(Campaign)  (Charge)-[:AT_LOCATION]->(Location)
-(Charge)-[:DIAGNOSED_WITH]->(DiagnosisCode)  (Charge)-[:USES_PROCEDURE]->(ProcedureCode)
-(Charge)-[:PART_OF_VISIT]->(Visit)  (Visit)-[:PERFORMED_AT]->(Location)
-(Visit)-[:UNDER_PLAN]->(InsurancePlan)  (Location)-[:BELONGS_TO_PRACTICE]->(Practice)
-(BirdeyeReview)-[:REVIEWS]->(Location)  (Campaign)-[:RUN_BY]->(Practice)
-
-"""
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# QUALITY GATE
-# ─────────────────────────────────────────────────────────────────────────────
-
-WRITE_RE = re.compile(r"\b(CREATE|MERGE|SET|DELETE|REMOVE|DROP|DETACH)\b", re.I)
-
-# Wrong property names that were in old training data — catch and reject
-WRONG_PROPS = re.compile(
-    r"\b(c\.amount|c\.agent|c\.call_type|c\.duration|c\.successful_calls"
-    r"|c\.failed_calls|iv\.amount_collected|rc\.agent\b"
-    r"|c\.service_date|c\.successful|l\.code)\b",
-    re.I
-)
-
 def check_pair(question: str, cypher: str) -> tuple[bool, str]:
     if not question or not question.strip(): return False, "empty question"
     if not cypher  or not cypher.strip():   return False, "empty cypher"
     u = cypher.upper()
     if "MATCH"  not in u: return False, "no MATCH"
     if "RETURN" not in u: return False, "no RETURN"
-    if "LIMIT"  not in u: return False, "no LIMIT"
+    # LIMIT is only mandatory for non-aggregate result sets (per Modelfile).
+    # Aggregate queries like "MATCH (p:Patient) RETURN count(p) AS n" are valid
+    # without LIMIT — v5 wrongly dropped these.
+    if "LIMIT" not in u and not AGG_RE.search(cypher):
+        return False, "no LIMIT (non-aggregate)"
     if WRITE_RE.search(cypher):      return False, "write keyword"
     if WRONG_PROPS.search(cypher):   return False, "wrong_property_name"
     if len(cypher) < 20:             return False, "too short"
@@ -206,12 +138,13 @@ def validate_dataset(df: pd.DataFrame, name: str) -> pd.DataFrame:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# FORMATTING — Qwen ChatML
+# FORMATTING — Qwen3 ChatML (identical markup to Qwen2.5; NO <think> blocks
+# in the 2507 instruct variant)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def make_formatting_func(tokenizer):
     """
-    Qwen ChatML format:
+    Qwen3 ChatML format:
       <|im_start|>system
       SYSTEM_PROMPT<|im_end|>
       <|im_start|>user
@@ -245,26 +178,31 @@ def make_formatting_func(tokenizer):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="LoRA fine-tuning — Qwen2.5-Coder-7B for RP Text2Cypher"
+        description="LoRA fine-tuning — Qwen3-4B-Instruct-2507 for RP Text2Cypher"
     )
     parser.add_argument("--train-data",     default="data/splits/train.parquet")
     parser.add_argument("--val-data",       default="data/splits/val.parquet")
     parser.add_argument("--num-epochs",     type=int,   default=3)
-    parser.add_argument("--output-dir",     default="./lora_adapter_v3")
-    parser.add_argument("--batch-size",     type=int,   default=2)
+    parser.add_argument("--output-dir",     default="./lora_adapter_q3_v1")
+    parser.add_argument("--batch-size",     type=int,   default=1,
+                        help="Per-device batch. Seq length is ~8-9k tokens now; "
+                             "raise to 2 only if VRAM allows.")
     parser.add_argument("--eval-steps",     type=int,   default=50)
-    parser.add_argument("--save-steps",     type=int,   default=100)
-    parser.add_argument("--max-seq-length", type=int,   default=4096)
+    parser.add_argument("--save-steps",     type=int,   default=50)   # was 100
+    parser.add_argument("--max-seq-length", type=int,   default=10240,
+                        help="Must fit the FULL Modelfile system prompt (~7-8k "
+                             "tokens) + question + Cypher. Ollama num_ctx is 9216.")
     parser.add_argument("--learning-rate",  type=float, default=None)
     parser.add_argument("--smoke-test",     action="store_true",
                         help="Run on 50 rows to verify pipeline (2 min)")
     parser.add_argument("--skip-gguf",      action="store_true")
+    
     args = parser.parse_args()
 
     lr = args.learning_rate or settings.LEARNING_RATE
 
     print("=" * 70)
-    print("  LoRA Fine-Tuning — Qwen2.5-Coder-7B  (Text2Cypher v5)")
+    print("  LoRA Fine-Tuning — Qwen3-4B-Instruct-2507  (Text2Cypher v6)")
     print("=" * 70)
     print(f"  Base model:     {LORA_BASE_MODEL}")
     print(f"  Output:         {args.output_dir}")
@@ -301,7 +239,7 @@ def main():
         val_df[["question","cypher"]], preserve_index=False
     )
 
-    # ── 2. Load Qwen2.5-Coder model ───────────────────────────────────────────
+    # ── 2. Load Qwen3-4B-Instruct-2507 ────────────────────────────────────────
     print(f"\n📥 Loading {LORA_BASE_MODEL} ...")
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name     = LORA_BASE_MODEL,
@@ -309,8 +247,17 @@ def main():
         dtype          = None,
         load_in_4bit   = True,
     )
-    # Use Qwen chat template
-    tokenizer = get_chat_template(tokenizer, "qwen-2.5")
+    # The 2507 instruct tokenizer already ships a plain ChatML template with no
+    # <think> handling — keep it. Only remap if unsloth knows a qwen3 template.
+    for tmpl_name in ("qwen3-instruct", "qwen3", "qwen-3"):
+        try:
+            tokenizer = get_chat_template(tokenizer, tmpl_name)
+            print(f"   ✓ chat template: {tmpl_name}")
+            break
+        except Exception:
+            continue
+    else:
+        print("   ✓ chat template: tokenizer native (ChatML)")
     print(f"   ✓ {model.config.model_type} loaded")
 
     # ── 3. LoRA adapter ───────────────────────────────────────────────────────
@@ -347,7 +294,17 @@ def main():
     print(f"   End:   {ex[-50:]!r}")
 
     if tok_count > args.max_seq_length - 100:
-        print(f"   ✗ WARNING: too long ({tok_count}). Increase --max-seq-length.")
+        print(f"   ✗ FATAL: example too long ({tok_count} tokens). "
+              f"Increase --max-seq-length.")
+        sys.exit(1)
+
+    # Guard: a <think> block means the THINKING qwen3 base/template was loaded
+    # instead of the 2507 instruct variant — masking and Ollama serving would
+    # both break silently.
+    if "<think>" in ex:
+        print("   ✗ FATAL: <think> block in formatted example — wrong base model")
+        print("     Use Qwen/Qwen3-4B-Instruct-2507 (non-thinking), not qwen3 base.")
+        sys.exit(1)
 
     # Verify response template exists
     if RESPONSE_TEMPLATE not in ex:
@@ -361,7 +318,7 @@ def main():
         print(f"   ✗ FATAL: Cypher not found in formatted example")
         sys.exit(1)
 
-    print(f"   ✓ Format verified — Qwen ChatML with Cypher in assistant turn")
+    print(f"   ✓ Format verified — Qwen3 ChatML with Cypher in assistant turn")
 
     # ── 5. Response masking collator ─────────────────────────────────────────
     print(f"\n🎯 Response masking — loss computed ONLY on Cypher tokens")
@@ -414,6 +371,9 @@ def main():
         max_grad_norm               = settings.MAX_GRAD_NORM,
         max_seq_length              = args.max_seq_length,
         packing                     = False,
+        per_device_eval_batch_size = 1,     # eval was silently using batch 8
+        prediction_loss_only       = True,  # don't retain logits — loss is all we need
+        eval_accumulation_steps    = 1,
     )
 
     # ── 7. Trainer ────────────────────────────────────────────────────────────
@@ -467,9 +427,9 @@ def main():
             )
             print(f"   ✓ {settings.GGUF_EXPORT_DIR}/model-unsloth.Q4_K_M.gguf")
             print(f"\n   To deploy:")
-            print(f"   # Update Modelfile.jp FROM line:")
+            print(f"   # Update Modelfile.qwen3-4b FROM line:")
             print(f"   # FROM {settings.GGUF_EXPORT_DIR}/model-unsloth.Q4_K_M.gguf")
-            print(f"   ollama create text2cypher-ft -f Modelfile.jp")
+            print(f"   ollama create text2cypher-q3-ft -f Modelfile.qwen3-4b")
         except Exception as e:
             print(f"   ⚠  GGUF failed: {e}")
 

@@ -33,6 +33,7 @@ import pandas as pd
 import torch
 from neo4j import GraphDatabase
 from tqdm import tqdm
+from prompt import SYSTEM_PROMPT
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 import settings
@@ -78,30 +79,6 @@ class SafeEncoder(json.JSONEncoder):
         return super().default(obj)
 
 
-# ── System prompt — must match train_lora.py exactly ─────────────────────────
-
-SYSTEM_PROMPT = (
-    "You are an expert Cypher query generator for the RP "
-    "knowledge graph.\n\n"
-    "Rules:\n"
-    "- Output ONLY valid Cypher. No markdown, no explanation.\n"
-    "- Every query must have a LIMIT clause.\n"
-    "- Use datetime() to wrap ISO 8601 date strings.\n"
-    "- Alias all aggregations (count(*) AS total, sum(x) AS total_x).\n"
-    "- Read-only only: no CREATE, MERGE, SET, DELETE, REMOVE.\n"
-    "- One MATCH statement per query.\n\n"
-    "Nodes: Patient, Visit, Charge, Transaction, Statement, PhoneBridge,\n"
-    "       RCCall, IVRInbound, DiallerCall, Location, InsurancePlan,\n"
-    "       Practice, Campaign, DiagnosisCode, ProcedureCode, BirdeyeReview\n"
-    "Key paths:\n"
-    "  (Patient)-[:HAD_VISIT]->(Visit)-[:PERFORMED_AT]->(Location)\n"
-    "  (Patient)-[:HAS_CHARGE]->(Charge)<-[:SETTLES]-(Transaction)\n"
-    "  (Patient)-[:IDENTIFIED_BY_PHONE]->(PhoneBridge)"
-    "<-[:ATTRIBUTED_TO_PHONE]-(RCCall)\n"
-    "  (Charge)-[:AT_LOCATION]->(Location)-[:BELONGS_TO_PRACTICE]->(Practice)\n"
-    "  (Visit)-[:UNDER_PLAN]->(InsurancePlan)\n"
-    "  (BirdeyeReview)-[:REVIEWS]->(Location)\n\n"
-)
 
 REPETITION_RE = re.compile(r"(\bAS\b\s*){5,}", re.IGNORECASE)
 
