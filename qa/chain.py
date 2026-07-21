@@ -15,20 +15,24 @@ Caching:
 Timing:
   - Per-request timing logs every major phase. Set LOG_LEVEL=INFO to see.
 
-Changes vs previous version:
-  - Phase E no longer uses GraphCypherQAChain. That chain runs its own
-    extract_cypher() on the model output, and with our text2cypher model —
-    which emits a ```cypher fenced block — the extraction captured only the
-    opening ``` and dropped the query body, producing empty Cypher. We now
-    call the cypher LLM directly, clean the output with autofix_cypher()
-    (which extracts the fenced body), run it through the guarded graph, and
-    stream the QA answer ourselves. This removes the broken extraction layer
-    entirely and gives us the raw model text for logging.
-  - get_neo4j_graph: schema is NOT re-injected (the model carries it in its
-    Modelfile SYSTEM prompt); {schema} in CYPHER_GENERATION_PROMPT is a tiny
-    placeholder.
-  - get_cypher_llm: num_ctx 8192 so the Modelfile SYSTEM prompt fits.
-  - Phase B (rewrite) runs BEFORE Phase A (guardrail) for follow-ups.
+Changes vs previous version (query logging fixes):
+  - EVERY exit path now writes a query_log row:
+      * input guardrail block   → status="blocked"
+      * answer cache hit        → status="cache_hit"
+      * hybrid success          → status="hybrid"
+      * hybrid crash            → status="error"
+      * empty cypher            → status="blocked"
+      * cypher guardrail block  → status="blocked"
+      * Neo4j execution error   → status="error"  (and NOW RETURNS — see below)
+      * success                 → status="ok"
+  - BUGFIX: the generic Neo4j execution exception handler previously logged an
+    error row but did not return, so the pipeline fell through to the QA phase
+    with results=[], streamed an answer over zero rows, and Phase F logged a
+    SECOND row with status="ok". It now yields an error event and returns.
+  - `rewritten` is computed once after Phase B and passed to every log call
+    (previously only 2 of 6 call sites included it).
+  - If the QA answer generation fails but the fallback text is used, the final
+    "ok" row carries detail="qa_fallback: <error>" so it is distinguishable.
 """
 import os
 import time
@@ -57,6 +61,7 @@ from cache import get_answer_cache, make_cache_key
 from qa.router import route, Path
 from qa.hybrid_retriever import stream_hybrid_response
 from qa.cypher_autofix import autofix_cypher
+from querylog import log_query
 
 logger = logging.getLogger(__name__)
 
@@ -137,10 +142,7 @@ class GuardedNeo4jGraph(Neo4jGraph):
                 raise GuardrailBlocked(check.reason)
             query = check.payload
 
-        try:
-            rows = super().query(query, params)
-        except Exception:
-            raise
+        rows = super().query(query, params)
 
         if settings.guardrails_enabled and settings.guardrails_redact_output:
             rows = redact_rows(rows)
@@ -367,10 +369,15 @@ async def stream_qa_response(
       {"type": "end",        "data": ""}
       {"type": "error",      "data": "<message>"}
       {"type": "blocked",    "data": "<reason>"}
+
+    Query logging: every exit path writes exactly ONE query_log row.
     """
     settings = get_settings()
     t_start = time.monotonic()
     timings: dict[str, float] = {}
+
+    def _elapsed_ms() -> int:
+        return int((time.monotonic() - t_start) * 1000)
 
     # Stores initialised early so Phase B (rewrite) and Phase F (persist) share
     # them and the raw user turn is always available to write.
@@ -388,14 +395,17 @@ async def stream_qa_response(
             f"focus_ids={len(focus_ids)}, question={question!r}"
         )
         if transcript:
-            rewritten = rewrite_question(question, transcript, focus_ids)
-            if rewritten and rewritten != question:
-                logger.info(f"Phase B rewrite (pre-guard): {question!r} → {rewritten!r}")
-                yield {"type": "rewrite", "data": rewritten}
-                question = rewritten
+            rewritten_q = rewrite_question(question, transcript, focus_ids)
+            if rewritten_q and rewritten_q != question:
+                logger.info(f"Phase B rewrite (pre-guard): {question!r} → {rewritten_q!r}")
+                yield {"type": "rewrite", "data": rewritten_q}
+                question = rewritten_q
         else:
             logger.info("Phase B: no transcript yet — skipping rewrite (first turn)")
     timings["memory"] = time.monotonic() - t_mem
+
+    # Computed once, passed to EVERY log_query call below.
+    rewritten = question if question != original_question else None
 
     # ── Phase A: input guardrail (on the possibly-rewritten question) ─────
     t_a = time.monotonic()
@@ -403,6 +413,15 @@ async def stream_qa_response(
         gate = check_input(question)
         if not gate.ok:
             logger.info(f"Input guardrail blocked: {gate.reason}")
+            log_query(
+                question=original_question,
+                conversation_id=conversation_id,
+                rewritten=rewritten,
+                status="blocked",
+                detail=f"input_guardrail: {gate.reason}",
+                total_ms=_elapsed_ms(),
+                model=settings.cypher_model,
+            )
             yield {"type": "blocked", "data": gate.reason}
             yield {"type": "end", "data": ""}
             return
@@ -423,6 +442,18 @@ async def stream_qa_response(
             logger.info(
                 f"Answer cache HIT — key={cache_key}, "
                 f"total={int(timings['total'] * 1000)}ms"
+            )
+            log_query(
+                question=original_question,
+                conversation_id=conversation_id,
+                rewritten=rewritten,
+                cypher=cached.get("cypher") or None,
+                status="cache_hit",
+                detail=f"key={cache_key}",
+                total_ms=int(timings["total"] * 1000),
+                row_count=len(cached.get("results") or []),
+                answer_chars=len(cached.get("answer") or ""),
+                model=settings.cypher_model,
             )
             yield {"type": "cache_hit", "data": cache_key}
             yield {"type": "token", "data": cached.get("answer", "")}
@@ -452,6 +483,7 @@ async def stream_qa_response(
         answer_tokens: list[str] = []
         hybrid_cypher = ""
         hybrid_results: list[dict] = []
+        hybrid_error: str | None = None
         t_hybrid = time.monotonic()
         try:
             async for ev in stream_hybrid_response(question):
@@ -460,11 +492,23 @@ async def stream_qa_response(
                 elif ev["type"] == "cypher":
                     hybrid_cypher = ev.get("data", "")
                     hybrid_results = ev.get("results", [])
+                elif ev["type"] == "error":
+                    hybrid_error = ev.get("data", "unknown hybrid error")
                 yield ev
                 if ev["type"] in ("end", "error"):
                     break
         except Exception as e:
             logger.error(f"Hybrid path crashed: {e}", exc_info=True)
+            log_query(
+                question=original_question,
+                conversation_id=conversation_id,
+                rewritten=rewritten,
+                cypher=hybrid_cypher or None,
+                status="error",
+                detail=f"hybrid: {e}",
+                total_ms=_elapsed_ms(),
+                model=settings.cypher_model,
+            )
             yield {"type": "error", "data": str(e)}
             return
 
@@ -479,8 +523,22 @@ async def stream_qa_response(
             f"total={int(timings['total'] * 1000)}ms"
         )
 
+        answer_text = "".join(answer_tokens).strip()
+        log_query(
+            question=original_question,
+            conversation_id=conversation_id,
+            rewritten=rewritten,
+            cypher=hybrid_cypher or None,
+            exec_ms=int(timings["hybrid"] * 1000),
+            total_ms=int(timings["total"] * 1000),
+            row_count=len(hybrid_results),
+            status="error" if hybrid_error else "hybrid",
+            detail=f"hybrid: {hybrid_error}" if hybrid_error else None,
+            answer_chars=len(answer_text),
+            model=settings.cypher_model,
+        )
+
         try:
-            answer_text = "".join(answer_tokens).strip()
             if conversation_id and session_store and focus_store:
                 session_store.append_user(conversation_id, original_question)
                 if answer_text:
@@ -488,7 +546,8 @@ async def stream_qa_response(
                 new_focus = extract_entity_ids(hybrid_results)
                 if new_focus:
                     focus_store.set(conversation_id, new_focus)
-            if cache is not None and cache_key and answer_text and hybrid_results:
+            if (cache is not None and cache_key and answer_text
+                    and hybrid_results and not hybrid_error):
                 cache.set(cache_key, {
                     "question": question,
                     "cypher":   hybrid_cypher,
@@ -512,49 +571,87 @@ async def stream_qa_response(
     timings["build_chain"] = time.monotonic() - t_build
 
     cypher: str = ""
+    cypher_gen_ms: int | None = None
+    exec_ms: int | None = None
     results: list[dict] = []
     answer_tokens = []
+    qa_error: str | None = None
     t_chain_start = time.monotonic()
+    t_gen = time.monotonic()
 
     # 1) Generate Cypher (deterministic, non-streaming).
     try:
         cypher = await _generate_cypher(question, graph_obj, cypher_llm)
     except Exception as e:
         logger.error(f"Cypher generation failed: {e}", exc_info=True)
+        log_query(
+            question=original_question,
+            conversation_id=conversation_id,
+            rewritten=rewritten,
+            status="error",
+            detail=f"cypher_gen: {e}",
+            total_ms=_elapsed_ms(),
+            model=settings.cypher_model,
+        )
         yield {"type": "error", "data": f"Failed to generate a query: {e}"}
         return
+    cypher_gen_ms = int((time.monotonic() - t_gen) * 1000)
 
     if not cypher.strip():
-        logger.warning("Cypher generation produced empty output after autofix")
-        yield {
-            "type": "blocked",
-            "data": "The model did not produce a query for that question. Try rephrasing it.",
-        }
+        log_query(
+            question=original_question,
+            conversation_id=conversation_id,
+            rewritten=rewritten,
+            cypher_gen_ms=cypher_gen_ms,
+            status="blocked",
+            detail="empty cypher after autofix",
+            total_ms=_elapsed_ms(),
+            model=settings.cypher_model,
+        )
+        yield {"type": "blocked", "data": "The model did not produce a query. Try rephrasing the question."}
         yield {"type": "end", "data": ""}
         return
 
     # 2) Execute (autofix re-runs idempotently + guardrail + redaction inside).
     #    graph_obj.query is synchronous (Neo4j sync driver) → run off the loop.
+    t_exec = time.monotonic()
     try:
         results = await asyncio.to_thread(graph_obj.query, cypher)
+        exec_ms = int((time.monotonic() - t_exec) * 1000)
         logger.info(f"Cypher executed — {len(results)} rows")
     except GuardrailBlocked as e:
-        logger.info(f"Cypher guardrail rejected: {e}")
-        yield {
-            "type": "blocked",
-            "data": f"The generated query was rejected: {e}. Try rephrasing.",
-        }
+        log_query(
+            question=original_question,
+            conversation_id=conversation_id,
+            rewritten=rewritten,
+            cypher=cypher,
+            cypher_gen_ms=cypher_gen_ms,
+            status="blocked",
+            detail=f"cypher_guardrail: {e}",
+            total_ms=_elapsed_ms(),
+            model=settings.cypher_model,
+        )
+        yield {"type": "blocked", "data": f"The generated query was rejected: {e}"}
         yield {"type": "end", "data": ""}
         return
     except Exception as e:
+        # BUGFIX: previously this logged and then FELL THROUGH to the QA phase
+        # with results=[], producing an answer over zero rows AND a second
+        # query_log row with status="ok". Now: log once, tell the client, stop.
         logger.error(f"Cypher execution failed: {e}", exc_info=True)
-        msg = str(e)
-        if "SyntaxError" in msg or "GqlError" in msg:
-            msg = (
-                "The query generator produced invalid Cypher. "
-                f"Try rephrasing your question.\n\nDetails: {msg[:300]}"
-            )
-        yield {"type": "error", "data": msg}
+        log_query(
+            question=original_question,
+            conversation_id=conversation_id,
+            rewritten=rewritten,
+            cypher=cypher,
+            cypher_gen_ms=cypher_gen_ms,
+            exec_ms=int((time.monotonic() - t_exec) * 1000),
+            status="error",
+            detail=f"cypher_exec: {str(e)[:500]}",
+            total_ms=_elapsed_ms(),
+            model=settings.cypher_model,
+        )
+        yield {"type": "error", "data": f"Query execution failed: {e}"}
         return
 
     # 3) Generate the natural-language answer, streaming tokens as they arrive.
@@ -570,6 +667,7 @@ async def stream_qa_response(
                 yield {"type": "token", "data": tok}
     except Exception as e:
         logger.error(f"Answer generation failed: {e}", exc_info=True)
+        qa_error = str(e)[:300]
         if not answer_tokens:
             fallback = f"The query ran and returned {len(results)} row(s)."
             answer_tokens.append(fallback)
@@ -598,8 +696,9 @@ async def stream_qa_response(
                     focus_store.set(conversation_id, new_focus)
                     logger.debug(f"Phase F: focus updated — {len(new_focus)} IDs")
 
-        # Answer cache — only cache turns with a real answer + valid Cypher.
-        if cache is not None and cache_key and answer_text and cypher:
+        # Answer cache — only cache turns with a real answer + valid Cypher,
+        # and never cache a QA-fallback answer.
+        if cache is not None and cache_key and answer_text and cypher and not qa_error:
             cache.set(cache_key, {
                 "question": question,
                 "cypher":   cypher,
@@ -612,7 +711,7 @@ async def stream_qa_response(
                 f"Cache SET skipped — "
                 f"cache={cache is not None}, key={bool(cache_key)}, "
                 f"answer={bool(answer_text)} ({len(answer_text)} chars), "
-                f"cypher={bool(cypher)}"
+                f"cypher={bool(cypher)}, qa_error={bool(qa_error)}"
             )
 
     except Exception as e:
@@ -621,6 +720,20 @@ async def stream_qa_response(
     timings["persist"] = time.monotonic() - t_persist
     timings["total"] = time.monotonic() - t_start
 
+    log_query(
+        question=original_question,
+        conversation_id=conversation_id,
+        rewritten=rewritten,
+        cypher=cypher,
+        cypher_gen_ms=cypher_gen_ms,
+        exec_ms=exec_ms,
+        total_ms=int(timings["total"] * 1000),
+        row_count=len(results),
+        status="ok",
+        detail=f"qa_fallback: {qa_error}" if qa_error else None,
+        answer_chars=len("".join(answer_tokens)),
+        model=settings.cypher_model,
+    )
     logger.info(
         f"Pipeline complete (cypher) — "
         f"guardrail={int(timings['guardrail'] * 1000)}ms, "

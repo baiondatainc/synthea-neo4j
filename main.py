@@ -24,6 +24,8 @@ import asyncio
 from glob import glob
 from pathlib import Path
 from qa.chain import stream_qa_response
+from dotenv import load_dotenv
+load_dotenv()
 
 logging.basicConfig(
     level=logging.INFO,

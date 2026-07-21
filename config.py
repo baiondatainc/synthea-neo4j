@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     cache_enabled: bool = Field(True, env="CACHE_ENABLED")
     # Bump when graph schema or ingestion changes to invalidate the cache.
     schema_version: str = Field("v1", env="SCHEMA_VERSION")
-
+    
     # ── v2: Guardrails ───────────────────────────────────────────────────
     guardrails_enabled: bool = Field(True, env="GUARDRAILS_ENABLED")
     guardrails_redact_output: bool = Field(True, env="GUARDRAILS_REDACT_OUTPUT")
@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     # ── v2: Hybrid retriever (reserved for phase D) ──────────────────────
     hybrid_retriever_enabled: bool = Field(False, env="HYBRID_RETRIEVER_ENABLED")
 
+    querylog_enabled: bool = True
+    querylog_dsn: str = ""
+    
     class Config:
         env_file = ".env"
         extra = "ignore"
