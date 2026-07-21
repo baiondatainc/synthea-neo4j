@@ -66,3 +66,5 @@ gguf_export_v3_gguf/
 lora_checkpoints
 /gguf_export_v3_gguf/
 scripts/gguf_export_v3_gguf
+lora_adapter_q3_v1/
+lora_adapter_q3_v2/

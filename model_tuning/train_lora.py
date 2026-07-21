@@ -1,54 +1,54 @@
 #!/usr/bin/env python3
 """
-train_lora.py  v6  — aligned with Modelfile.qwen3-4b (2026-07)
+train_lora.py  v7  — clean export chain (2026-07)
 ─────────────────────────────────────────────────────────────
-Fine-tunes Qwen3-4B-Instruct-2507 for RP Text2Cypher.
+Fine-tunes Qwen3-4B-Instruct-2507 for RP Text2Cypher and produces a
+DEPLOYABLE q4_k_m GGUF in one run.
 
-Why Qwen3-4B-Instruct-2507 over Qwen2.5-Coder-7B:
-  - Matches the NEW production Ollama model (Modelfile.qwen3-4b,
-    FROM qwen3:4b-instruct-2507-q4_K_M)
-  - Non-thinking instruct variant → same plain ChatML template, no <think>
-  - Smaller (4B vs 7B) → faster training, faster CPU inference in Ollama
-
-Changes vs v5:
-  1. Base model → Qwen3-4B-Instruct-2507 (was Qwen2.5-Coder-7B)
-  2. LORA_BASE_MODEL is now actually IMPORTED from prompt.py
-     (v5 referenced it without importing — NameError at runtime)
-  3. SYSTEM_PROMPT comes from Modelfile.qwen3-4b via prompt.py — the full
-     ~7-8k token production prompt, so --max-seq-length default is now 10240
-     (was 4096, which cannot fit the real system prompt)
-  4. Chat template: prefer the tokenizer's native Qwen3 ChatML; fatal check
-     that no <think> block appears in formatted examples (would mean the
-     wrong/thinking base model was loaded)
-  5. check_pair: LIMIT only required for NON-aggregate queries — the
-     Modelfile's own examples ("How many patients?") have no LIMIT and are
-     correct; v5 would have dropped them from training data
-  6. Deploy instructions point at Modelfile.qwen3-4b / text2cypher-q3-ft
-
-Expected loss:
-  Smoke test (50 rows, 3 steps): 2-5  (not converged, just verifies format)
-  Full train epoch 1:            1.0-2.0
-  Full train epoch 3:            0.2-0.5
+Changes vs v6 (why v6's GGUF emitted EOS after one token):
+  1. load_in_4bit=False — v6's 4-bit load made unsloth silently swap to its
+     bnb-4bit mirror, whose tokenizer lacks a pad token. Unsloth then ADDED
+     <|PAD_TOKEN|> (vocab resize) and any merge dequantized from nf4.
+     Both poisons produced a GGUF whose adapter worked in Python but died
+     after one token in Ollama. 16-bit load eliminates both, and trains
+     FASTER (no dequant overhead). 4B bf16 fits easily in 23.5 GB.
+  2. Pad-token guard — even if a future unsloth version tries, pad is pinned
+     to the EXISTING <|endoftext|> token: no vocab resize, ever.
+  3. Section 10 rewritten — unsloth's save_pretrained_gguf (the component
+     that produced the broken artifact) is replaced with the manual chain
+     verified by hand: save_pretrained_merged(16bit) → llama.cpp
+     convert_hf_to_gguf → llama-quantize q4_k_m.
+  4. num_epochs default 3 → 2 — v6's loss hit 0.017 by epoch 1.2; epoch 3
+     was pure overfitting risk on a ~350-pair dataset.
+  5. Keeps the v6.1 OOM fixes: per_device_eval_batch_size=1,
+     prediction_loss_only=True, eval_accumulation_steps=1, save_steps=50.
 
 Usage:
     # Smoke test first (2 min):
-    python scripts/train_lora.py \\
+    python model_tuning/train_lora.py \\
         --train-data data/splits/train.parquet \\
         --val-data   data/splits/val.parquet \\
         --output-dir ./lora_smoke_test \\
         --num-epochs 1 --smoke-test --skip-gguf
 
-    # Full training:
-    python scripts/train_lora.py \\
+    # Full training + deployable GGUF (~30 min):
+    PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \\
+    python model_tuning/train_lora.py \\
         --train-data data/splits/train.parquet \\
         --val-data   data/splits/val.parquet \\
-        --output-dir ./lora_adapter_q3_v1
+        --output-dir ./lora_adapter_q3_v2
+
+    # Deploy:
+    #   set Modelfile.qwen3-4b FROM → <GGUF_EXPORT_DIR>/model-q4_k_m.gguf
+    #   ollama create text2cypher-ft-candidate -f Modelfile.qwen3-4b
 """
 
 import unsloth  # noqa: F401 — must be FIRST
 
 import argparse
 import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 from datetime import datetime
@@ -63,7 +63,7 @@ from prompt import (
     WRITE_RE,
     WRONG_PROPS,
     AGG_RE,
-    LORA_BASE_MODEL,   # ← v5 used this without importing it
+    LORA_BASE_MODEL,
 )
 
 # DataCollatorForCompletionOnlyLM moved between trl and transformers across versions
@@ -73,13 +73,13 @@ except ImportError:
     try:
         from transformers import DataCollatorForCompletionOnlyLM
     except ImportError:
-        # Implement a minimal version inline if neither works
+        # Minimal inline fallback (verified: masks everything before the
+        # response template; quick_check 5/5 confirms the adapter it trained)
         from transformers import DataCollatorForLanguageModeling
 
         class DataCollatorForCompletionOnlyLM(DataCollatorForLanguageModeling):
             def __init__(self, response_template, tokenizer, *args, **kwargs):
                 super().__init__(tokenizer=tokenizer, mlm=False, *args, **kwargs)
-                self.response_template = response_template
                 self.response_token_ids = response_template
 
             def torch_call(self, examples):
@@ -101,6 +101,8 @@ import settings
 from unsloth import FastLanguageModel
 from unsloth.chat_templates import get_chat_template
 
+LLAMA_CPP = Path.home() / ".unsloth" / "llama.cpp"
+
 
 def check_pair(question: str, cypher: str) -> tuple[bool, str]:
     if not question or not question.strip(): return False, "empty question"
@@ -108,9 +110,7 @@ def check_pair(question: str, cypher: str) -> tuple[bool, str]:
     u = cypher.upper()
     if "MATCH"  not in u: return False, "no MATCH"
     if "RETURN" not in u: return False, "no RETURN"
-    # LIMIT is only mandatory for non-aggregate result sets (per Modelfile).
-    # Aggregate queries like "MATCH (p:Patient) RETURN count(p) AS n" are valid
-    # without LIMIT — v5 wrongly dropped these.
+    # LIMIT only mandatory for non-aggregate result sets (per Modelfile).
     if "LIMIT" not in u and not AGG_RE.search(cypher):
         return False, "no LIMIT (non-aggregate)"
     if WRITE_RE.search(cypher):      return False, "write keyword"
@@ -138,22 +138,10 @@ def validate_dataset(df: pd.DataFrame, name: str) -> pd.DataFrame:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# FORMATTING — Qwen3 ChatML (identical markup to Qwen2.5; NO <think> blocks
-# in the 2507 instruct variant)
+# FORMATTING — Qwen3 ChatML (2507 instruct: no <think> blocks)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def make_formatting_func(tokenizer):
-    """
-    Qwen3 ChatML format:
-      <|im_start|>system
-      SYSTEM_PROMPT<|im_end|>
-      <|im_start|>user
-      QUESTION<|im_end|>
-      <|im_start|>assistant
-      CYPHER<|im_end|>
-
-    Loss is computed only on the assistant (Cypher) turn via DataCollator.
-    """
     def formatting_func(examples: dict) -> list[str]:
         texts = []
         for q, c in zip(examples["question"], examples["cypher"]):
@@ -162,14 +150,50 @@ def make_formatting_func(tokenizer):
                 {"role": "user",      "content": str(q).strip()},
                 {"role": "assistant", "content": str(c).strip()},
             ]
-            text = tokenizer.apply_chat_template(
-                messages,
-                tokenize              = False,
-                add_generation_prompt = False,
-            )
-            texts.append(text)
+            texts.append(tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=False))
         return texts
     return formatting_func
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GGUF EXPORT — manual chain (merge 16bit → convert → quantize)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def export_gguf(model, tokenizer, output_dir: str) -> Path | None:
+    """Merge adapter into 16-bit weights, convert with llama.cpp, quantize.
+
+    Replaces unsloth's save_pretrained_gguf, which produced a GGUF that
+    emitted EOS after one token (broken tokenizer/EOS metadata from the
+    4-bit-mirror tokenizer). This chain was verified by hand.
+    """
+    convert  = LLAMA_CPP / "convert_hf_to_gguf.py"
+    quantize = LLAMA_CPP / "llama-quantize"
+    if not convert.exists() or not quantize.exists():
+        print(f"   ✗ llama.cpp tools not found under {LLAMA_CPP} — "
+              f"skipping GGUF. Convert manually later.")
+        return None
+
+    merged_dir = Path(output_dir).with_name(Path(output_dir).name + "_merged")
+    gguf_dir   = Path(settings.GGUF_EXPORT_DIR)
+    gguf_dir.mkdir(parents=True, exist_ok=True)
+    bf16 = gguf_dir / "model-bf16.gguf"
+    q4   = gguf_dir / "model-q4_k_m.gguf"
+
+    print(f"\n🔧 [1/3] Merging adapter into 16-bit weights → {merged_dir}")
+    model.save_pretrained_merged(str(merged_dir), tokenizer,
+                                 save_method="merged_16bit")
+
+    print(f"🔧 [2/3] Converting to GGUF bf16 → {bf16}")
+    subprocess.run([sys.executable, str(convert), str(merged_dir),
+                    "--outfile", str(bf16), "--outtype", "bf16"], check=True)
+
+    print(f"🔧 [3/3] Quantizing to q4_k_m → {q4}")
+    subprocess.run([str(quantize), str(bf16), str(q4), "q4_k_m"], check=True)
+
+    bf16.unlink(missing_ok=True)     # reclaim ~8 GB
+    shutil.rmtree(merged_dir, ignore_errors=True)
+    return q4
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -178,33 +202,30 @@ def make_formatting_func(tokenizer):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="LoRA fine-tuning — Qwen3-4B-Instruct-2507 for RP Text2Cypher"
+        description="LoRA fine-tuning — Qwen3-4B-Instruct-2507 for RP Text2Cypher (v7)"
     )
     parser.add_argument("--train-data",     default="data/splits/train.parquet")
     parser.add_argument("--val-data",       default="data/splits/val.parquet")
-    parser.add_argument("--num-epochs",     type=int,   default=3)
-    parser.add_argument("--output-dir",     default="./lora_adapter_q3_v1")
-    parser.add_argument("--batch-size",     type=int,   default=1,
-                        help="Per-device batch. Seq length is ~8-9k tokens now; "
-                             "raise to 2 only if VRAM allows.")
+    parser.add_argument("--num-epochs",     type=int,   default=2,
+                        help="v6 hit loss 0.017 by epoch 1.2 — 2 is plenty")
+    parser.add_argument("--output-dir",     default="./lora_adapter_q3_v2")
+    parser.add_argument("--batch-size",     type=int,   default=1)
     parser.add_argument("--eval-steps",     type=int,   default=50)
-    parser.add_argument("--save-steps",     type=int,   default=50)   # was 100
+    parser.add_argument("--save-steps",     type=int,   default=50)
     parser.add_argument("--max-seq-length", type=int,   default=10240,
-                        help="Must fit the FULL Modelfile system prompt (~7-8k "
-                             "tokens) + question + Cypher. Ollama num_ctx is 9216.")
+                        help="Must fit the full Modelfile system prompt "
+                             "(~7-8k tokens) + question + Cypher")
     parser.add_argument("--learning-rate",  type=float, default=None)
-    parser.add_argument("--smoke-test",     action="store_true",
-                        help="Run on 50 rows to verify pipeline (2 min)")
+    parser.add_argument("--smoke-test",     action="store_true")
     parser.add_argument("--skip-gguf",      action="store_true")
-    
     args = parser.parse_args()
 
     lr = args.learning_rate or settings.LEARNING_RATE
 
     print("=" * 70)
-    print("  LoRA Fine-Tuning — Qwen3-4B-Instruct-2507  (Text2Cypher v6)")
+    print("  LoRA Fine-Tuning — Qwen3-4B-Instruct-2507  (Text2Cypher v7)")
     print("=" * 70)
-    print(f"  Base model:     {LORA_BASE_MODEL}")
+    print(f"  Base model:     {LORA_BASE_MODEL}  (16-bit load)")
     print(f"  Output:         {args.output_dir}")
     print(f"  max_seq_length: {args.max_seq_length}")
     print(f"  Smoke test:     {args.smoke_test}")
@@ -233,22 +254,21 @@ def main():
         print(f"  Smoke test: {len(train_df)} train / {len(val_df)} val")
 
     train_dataset = Dataset.from_pandas(
-        train_df[["question","cypher"]], preserve_index=False
-    )
+        train_df[["question", "cypher"]], preserve_index=False)
     val_dataset = Dataset.from_pandas(
-        val_df[["question","cypher"]], preserve_index=False
-    )
+        val_df[["question", "cypher"]], preserve_index=False)
 
-    # ── 2. Load Qwen3-4B-Instruct-2507 ────────────────────────────────────────
-    print(f"\n📥 Loading {LORA_BASE_MODEL} ...")
+    # ── 2. Load Qwen3-4B-Instruct-2507 in 16-bit ──────────────────────────────
+    # load_in_4bit=False is THE v7 fix: the 4-bit path swapped in unsloth's
+    # bnb-4bit mirror whose tokenizer had no pad token → <|PAD_TOKEN|> added,
+    # vocab resized, merge sourced from nf4 → broken GGUF (EOS after 1 token).
+    print(f"\n📥 Loading {LORA_BASE_MODEL} (16-bit) ...")
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name     = LORA_BASE_MODEL,
         max_seq_length = args.max_seq_length,
         dtype          = None,
-        load_in_4bit   = True,
+        load_in_4bit   = False,
     )
-    # The 2507 instruct tokenizer already ships a plain ChatML template with no
-    # <think> handling — keep it. Only remap if unsloth knows a qwen3 template.
     for tmpl_name in ("qwen3-instruct", "qwen3", "qwen-3"):
         try:
             tokenizer = get_chat_template(tokenizer, tmpl_name)
@@ -258,7 +278,14 @@ def main():
             continue
     else:
         print("   ✓ chat template: tokenizer native (ChatML)")
-    print(f"   ✓ {model.config.model_type} loaded")
+
+    # Pad guard: pin pad to an EXISTING token so no code path can ever resize
+    # the vocabulary again.
+    if tokenizer.pad_token is None or "<|PAD_TOKEN|>" in str(tokenizer.pad_token):
+        tokenizer.pad_token = "<|endoftext|>"
+        print("   ✓ pad_token pinned to <|endoftext|> (no vocab resize)")
+    print(f"   ✓ {model.config.model_type} loaded  "
+          f"(vocab={len(tokenizer):,} — must match base, no added tokens)")
 
     # ── 3. LoRA adapter ───────────────────────────────────────────────────────
     print(f"\n🎯 LoRA  r={settings.LORA_RANK}  α={settings.LORA_ALPHA}  "
@@ -275,80 +302,61 @@ def main():
     )
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total     = sum(p.numel() for p in model.parameters())
-    print(f"   ✓ {trainable:,.0f} / {total:,.0f} trainable ({trainable/total*100:.2f}%)")
+    print(f"   ✓ {trainable:,.0f} / {total:,.0f} trainable "
+          f"({trainable / total * 100:.2f}%)")
 
     # ── 4. Verify format + token budget ──────────────────────────────────────
     print(f"\n🔍 Verifying format and token budget...")
     fmt_fn = make_formatting_func(tokenizer)
-    sample = fmt_fn({
-        "question": [train_df.iloc[0]["question"]],
-        "cypher":   [train_df.iloc[0]["cypher"]],
-    })
-    ex        = sample[0]
+    ex = fmt_fn({"question": [train_df.iloc[0]["question"]],
+                 "cypher":   [train_df.iloc[0]["cypher"]]})[0]
     tok_count = len(tokenizer.encode(ex))
 
     print(f"   Tokens per example:  {tok_count}")
-    print(f"   max_seq_length:      {args.max_seq_length}")
     print(f"   Headroom:            {args.max_seq_length - tok_count}")
     print(f"   Start: {ex[:80]!r}")
     print(f"   End:   {ex[-50:]!r}")
 
     if tok_count > args.max_seq_length - 100:
-        print(f"   ✗ FATAL: example too long ({tok_count} tokens). "
-              f"Increase --max-seq-length.")
-        sys.exit(1)
-
-    # Guard: a <think> block means the THINKING qwen3 base/template was loaded
-    # instead of the 2507 instruct variant — masking and Ollama serving would
-    # both break silently.
+        print(f"   ✗ FATAL: example too long ({tok_count}). "
+              f"Increase --max-seq-length."); sys.exit(1)
     if "<think>" in ex:
-        print("   ✗ FATAL: <think> block in formatted example — wrong base model")
-        print("     Use Qwen/Qwen3-4B-Instruct-2507 (non-thinking), not qwen3 base.")
+        print("   ✗ FATAL: <think> block — wrong (thinking) base model loaded")
         sys.exit(1)
-
-    # Verify response template exists
     if RESPONSE_TEMPLATE not in ex:
         print(f"   ✗ FATAL: response template not found: {RESPONSE_TEMPLATE!r}")
-        print(f"   Full example:\n{ex[:500]}")
         sys.exit(1)
-
-    # Verify Cypher is in assistant turn
-    cypher_start = train_df.iloc[0]["cypher"][:20]
-    if cypher_start not in ex:
-        print(f"   ✗ FATAL: Cypher not found in formatted example")
-        sys.exit(1)
-
-    print(f"   ✓ Format verified — Qwen3 ChatML with Cypher in assistant turn")
+    if train_df.iloc[0]["cypher"][:20] not in ex:
+        print("   ✗ FATAL: Cypher not found in formatted example"); sys.exit(1)
+    print("   ✓ Format verified — Qwen3 ChatML with Cypher in assistant turn")
 
     # ── 5. Response masking collator ─────────────────────────────────────────
     print(f"\n🎯 Response masking — loss computed ONLY on Cypher tokens")
     resp_ids = tokenizer.encode(RESPONSE_TEMPLATE, add_special_tokens=False)
     print(f"   Response template IDs: {resp_ids}")
     collator = DataCollatorForCompletionOnlyLM(
-        response_template = resp_ids,
-        tokenizer         = tokenizer,
-    )
-    print(f"   ✓ Prompt tokens masked (label=-100)")
+        response_template=resp_ids, tokenizer=tokenizer)
+    print("   ✓ Prompt tokens masked (label=-100)")
 
     # ── 6. Training config ────────────────────────────────────────────────────
     steps_per_epoch = max(1, len(train_dataset) //
-                         (args.batch_size * settings.GRADIENT_ACCUMULATION_STEPS))
+                          (args.batch_size * settings.GRADIENT_ACCUMULATION_STEPS))
     total_steps  = steps_per_epoch * args.num_epochs
     warmup_steps = max(1, round(total_steps * settings.WARMUP_RATIO))
 
     print(f"\n⚙️  Training")
     print(f"   {len(train_dataset):,} train / {len(val_dataset):,} val")
-    print(f"   {args.num_epochs} epochs  ·  {steps_per_epoch} steps/epoch  "
-          f"·  {total_steps} total  ·  warmup={warmup_steps}")
-    print(f"   LR={lr:.2e}  batch={args.batch_size * settings.GRADIENT_ACCUMULATION_STEPS}")
-    if args.smoke_test:
-        print(f"   Smoke test: expect loss 2-6 (only {total_steps} steps)")
-    else:
-        print(f"   Target loss: epoch1 <1.5  epoch3 <0.5")
+    print(f"   {args.num_epochs} epochs · {steps_per_epoch} steps/epoch · "
+          f"{total_steps} total · warmup={warmup_steps}")
+    print(f"   LR={lr:.2e}  effective batch="
+          f"{args.batch_size * settings.GRADIENT_ACCUMULATION_STEPS}")
 
     sft_config = SFTConfig(
         output_dir                  = settings.CHECKPOINT_DIR,
         per_device_train_batch_size = args.batch_size,
+        per_device_eval_batch_size  = 1,     # default 8 caused the eval OOM
+        prediction_loss_only        = True,  # never retain eval logits
+        eval_accumulation_steps     = 1,
         gradient_accumulation_steps = settings.GRADIENT_ACCUMULATION_STEPS,
         warmup_steps                = warmup_steps,
         num_train_epochs            = args.num_epochs,
@@ -371,9 +379,6 @@ def main():
         max_grad_norm               = settings.MAX_GRAD_NORM,
         max_seq_length              = args.max_seq_length,
         packing                     = False,
-        per_device_eval_batch_size = 1,     # eval was silently using batch 8
-        prediction_loss_only       = True,  # don't retain logits — loss is all we need
-        eval_accumulation_steps    = 1,
     )
 
     # ── 7. Trainer ────────────────────────────────────────────────────────────
@@ -384,7 +389,7 @@ def main():
         train_dataset    = train_dataset,
         eval_dataset     = val_dataset,
         formatting_func  = make_formatting_func(tokenizer),
-        data_collator    = collator,       # ← response masking: loss on Cypher only
+        data_collator    = collator,
         args             = sft_config,
     )
 
@@ -395,49 +400,35 @@ def main():
     print("=" * 70)
 
     loss = stats.metrics.get("train_loss", "?")
-    time = stats.metrics.get("train_runtime", 0)
+    t = stats.metrics.get("train_runtime", 0)
     print(f"   Train loss: {loss:.4f}" if isinstance(loss, float) else f"   Loss: {loss}")
-    print(f"   Time:       {time/60:.1f} min")
-
-    if isinstance(loss, float):
-        if args.smoke_test and loss < 10:
-            print("\n  ✓ Smoke test PASSED — format is correct")
-            print(f"    Run full training: remove --smoke-test --skip-gguf flags")
-        elif not args.smoke_test and loss < 0.5:
-            print("\n  ✓ Excellent. Proceed to eval_runner.py")
-        elif not args.smoke_test and loss < 1.0:
-            print("\n  ✓ Good. Run eval_runner.py")
-        elif not args.smoke_test:
-            print(f"\n  ⚠  Loss {loss:.2f} — consider 1-2 more epochs")
+    print(f"   Time:       {t / 60:.1f} min")
 
     # ── 9. Save adapter ───────────────────────────────────────────────────────
-    print(f"\n💾 Saving → {args.output_dir}")
+    print(f"\n💾 Saving adapter → {args.output_dir}")
     model.save_pretrained(args.output_dir)
     tokenizer.save_pretrained(args.output_dir)
-    print(f"   ✓ Saved")
+    print("   ✓ Saved")
 
-    # ── 10. GGUF ──────────────────────────────────────────────────────────────
+    # ── 10. Merge + GGUF (manual, verified chain) ─────────────────────────────
     if not args.skip_gguf:
-        print(f"\n🔧 Exporting GGUF (q4_k_m)...")
-        os.makedirs(settings.GGUF_EXPORT_DIR, exist_ok=True)
         try:
-            model.save_pretrained_gguf(
-                settings.GGUF_EXPORT_DIR, tokenizer,
-                quantization_method="q4_k_m"
-            )
-            print(f"   ✓ {settings.GGUF_EXPORT_DIR}/model-unsloth.Q4_K_M.gguf")
-            print(f"\n   To deploy:")
-            print(f"   # Update Modelfile.qwen3-4b FROM line:")
-            print(f"   # FROM {settings.GGUF_EXPORT_DIR}/model-unsloth.Q4_K_M.gguf")
-            print(f"   ollama create text2cypher-q3-ft -f Modelfile.qwen3-4b")
-        except Exception as e:
-            print(f"   ⚠  GGUF failed: {e}")
+            q4 = export_gguf(model, tokenizer, args.output_dir)
+            if q4:
+                print(f"\n   ✓ Deployable GGUF: {q4.resolve()}")
+                print(f"\n   To deploy:")
+                print(f"   1. Modelfile.qwen3-4b FROM → {q4.resolve()}")
+                print(f"   2. ollama create text2cypher-ft-candidate -f Modelfile.qwen3-4b")
+                print(f"   3. ollama run text2cypher-ft-candidate \"How many patients?\"")
+        except subprocess.CalledProcessError as e:
+            print(f"   ⚠  GGUF chain failed at: {e.cmd}")
+            print(f"      Adapter is saved — convert manually per the docstring.")
 
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print(f"  ✅ Done → {args.output_dir}")
-    print(f"{'='*70}")
-    print(f"\n  python scripts/quick_check.py --model {args.output_dir}")
-    print(f"  python scripts/eval_runner.py  --model {args.output_dir} \\")
+    print(f"{'=' * 70}")
+    print(f"\n  python model_tuning/quick_check.py --model {args.output_dir}")
+    print(f"  python model_tuning/eval_runner.py  --model {args.output_dir} \\")
     print(f"    --eval data/eval/eval.json --uri bolt://localhost:7687\n")
 
 

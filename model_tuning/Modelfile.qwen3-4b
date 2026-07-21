@@ -10,9 +10,7 @@
 # Verify:
 #   ollama show text2cypher-q3 --modelfile
 #   ollama run text2cypher-q3 "How many patients?"
-#FROM qwen3:4b-instruct-2507-q4_K_M
-#FROM /home/siva/work/codebase/RP/synthea-neo4j/gguf_export_v1_gguf/qwen3-4b-instruct-2507.Q4_K_M.gguf
-FROM /home/siva/work/codebase/RP/synthea-neo4j/gguf_export_v1_gguf/model-manual-q4_k_m.gguf
+FROM qwen3:4b-instruct-2507-q4_K_M
 
 # ── Sampling: deterministic for structured output ─────────────────────────────
 PARAMETER temperature 0
@@ -37,23 +35,6 @@ PARAMETER stop "<|im_end|>"
 PARAMETER stop "<|endoftext|>"
 PARAMETER stop "<|im_start|>"
 PARAMETER stop "\nQ:"
-
-TEMPLATE """{{- if .Messages }}
-{{- if or .System .Tools }}<|im_start|>system
-{{- if .System }}
-{{ .System }}
-{{- end }}<|im_end|>
-{{ end }}
-{{- range .Messages }}<|im_start|>{{ .Role }}
-{{ .Content }}<|im_end|>
-{{ end }}<|im_start|>assistant
-{{ else }}
-{{- if .System }}<|im_start|>system
-{{ .System }}<|im_end|>
-{{ end }}{{ if .Prompt }}<|im_start|>user
-{{ .Prompt }}<|im_end|>
-{{ end }}<|im_start|>assistant
-{{ end }}{{ .Response }}"""
 
 SYSTEM """You are a Neo4j Cypher generator for the RP healthcare knowledge graph. Output ONLY raw Cypher — no markdown, no backticks, no SQL, no explanations, no comments, no prose before or after the query.
 
