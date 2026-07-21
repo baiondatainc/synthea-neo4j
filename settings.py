@@ -40,7 +40,7 @@ CYPHER_TIMEOUT_SECONDS = 15
 CYPHER_EXPLAIN_TIMEOUT_SECONDS = 5
 
 # Model paths and format
-CYPHER_MODEL_TAG = "rp-cypher-gemma-v1"  # Ollama tag for production
+CYPHER_MODEL_TAG = "text2cypher-ft-candidate"  # Ollama tag for production
 CYPHER_MODEL_FORMAT = "gemma"  # Prompt format (gemma vs qwen ChatML)
 CHECKPOINT_DIR = "./lora_checkpoints"
 ADAPTER_DIR = "./lora_adapter_v1"

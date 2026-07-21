@@ -1,0 +1,287 @@
+{
+  "timestamp": "2026-07-21 11:48",
+  "runs": [
+    {
+      "model": "text2cypher-ft",
+      "mean_score": 1.0,
+      "results": [
+        {
+          "question": "How many patients?",
+          "cypher": "MATCH (p:Patient)\nRETURN count(p) AS patient_count\nLIMIT 1",
+          "latency_s": 4.2,
+          "score": 1.0,
+          "row_count": 1,
+          "problems": [],
+          "exec_error": null
+        },
+        {
+          "question": "What is the total outstanding balance grouped by payor cohort?",
+          "cypher": "MATCH (p:Patient)\nRETURN p.payor_cohort AS cohort, round(sum(p.outstanding_balance), 2) AS total_outstanding\nORDER BY total_outstanding DESC\nLIMIT 10",
+          "latency_s": 0.7,
+          "score": 1.0,
+          "row_count": 3,
+          "problems": [],
+          "exec_error": null
+        },
+        {
+          "question": "Give me patient visit trends",
+          "cypher": "MATCH (v:Visit)\nWHERE v.admit_date IS NOT NULL\nRETURN v.admit_date.year AS year, v.admit_date.month AS month, count(v) AS visit_count\nORDER BY year, month\nLIMIT 100",
+          "latency_s": 0.9,
+          "score": 1.0,
+          "row_count": 96,
+          "problems": [],
+          "exec_error": null
+        },
+        {
+          "question": "Which locations have the highest Birdeye average rating?",
+          "cypher": "MATCH (b:BirdeyeReview)-[:REVIEWS]->(l:Location)\nWITH l.name AS location, l.state AS state, round(avg(b.rating), 2) AS avg_rating, count(b) AS review_count\nWHERE review_count > 5\nRETURN location, state, avg_rating, review_count\nORDER BY avg_rating DESC LIMIT 20",
+          "latency_s": 1.2,
+          "score": 1.0,
+          "row_count": 3,
+          "problems": [],
+          "exec_error": null
+        },
+        {
+          "question": "How many unique patients visited in the state of TX in 2023?",
+          "cypher": "MATCH (p:Patient)-[:HAD_VISIT]->(v:Visit)-[:PERFORMED_AT]->(l:Location)\nWHERE l.state = 'TX' AND v.admit_date IS NOT NULL AND v.admit_date.year = 2023\nRETURN count(DISTINCT p) AS unique_patients",
+          "latency_s": 1.1,
+          "score": 1.0,
+          "row_count": 1,
+          "problems": [],
+          "exec_error": null
+        },
+        {
+          "question": "Total bad debt by state",
+          "cypher": "MATCH (p:Patient)\nWHERE p.state IS NOT NULL AND p.adj_bad_debt > 0\nRETURN p.state AS state, round(sum(p.adj_bad_debt), 2) AS total_bad_debt\nORDER BY total_bad_debt DESC\nLIMIT 10",
+          "latency_s": 1.0,
+          "score": 1.0,
+          "row_count": 6,
+          "problems": [],
+          "exec_error": null
+        },
+        {
+          "question": "Reviews by location",
+          "cypher": "MATCH (b:BirdeyeReview)-[:REVIEWS]->(l:Location)\nRETURN l.name AS location, b.date_posted AS date_posted, b.rating AS rating, b.comment AS comment\nORDER BY l.name, b.date_posted DESC\nLIMIT 100",
+          "latency_s": 1.0,
+          "score": 1.0,
+          "row_count": 100,
+          "problems": [],
+          "exec_error": null
+        },
+        {
+          "question": "Top 10 practices by patient count",
+          "cypher": "MATCH (p:Patient)-[:REGISTERED_AT]->(pr:Practice)\nRETURN pr.code AS practice, count(p) AS patient_count\nORDER BY patient_count DESC\nLIMIT 10",
+          "latency_s": 0.7,
+          "score": 1.0,
+          "row_count": 10,
+          "problems": [],
+          "exec_error": null
+        },
+        {
+          "question": "How many statements are on hold?",
+          "cypher": "MATCH (s:Statement)\nWHERE s.is_on_hold = true\nRETURN count(s) AS statement_count,\n       sum(s.patient_balance) AS total_patient_balance\nLIMIT 1",
+          "latency_s": 0.7,
+          "score": 1.0,
+          "row_count": 1,
+          "problems": [],
+          "exec_error": null
+        },
+        {
+          "question": "How much was collected through IVR payments?",
+          "cypher": "MATCH (p:Patient)-[:CALLED_IVR]->(iv:IVRInbound)\nWHERE iv.amount_paid > 0\nRETURN sum(iv.amount_paid) AS total_collected\nLIMIT 1",
+          "latency_s": 0.7,
+          "score": 1.0,
+          "row_count": 1,
+          "problems": [],
+          "exec_error": null
+        },
+        {
+          "question": "What are the most common dialler call results?",
+          "cypher": "MATCH (p:Patient)-[:CONTACTED_BY_DIALLER]->(dc:DiallerCall)\nRETURN dc.result_desc AS result, count(dc) AS call_count\nORDER BY call_count DESC\nLIMIT 20",
+          "latency_s": 0.8,
+          "score": 1.0,
+          "row_count": 7,
+          "problems": [],
+          "exec_error": null
+        },
+        {
+          "question": "How many insurance plans does each practice have?",
+          "cypher": "MATCH (i:InsurancePlan)-[:ISSUED_BY_PRACTICE]->(pr:Practice)\nRETURN pr.code AS practice, count(i) AS plan_count\nORDER BY plan_count DESC\nLIMIT 20",
+          "latency_s": 0.8,
+          "score": 1.0,
+          "row_count": 20,
+          "problems": [],
+          "exec_error": null
+        },
+        {
+          "question": "Monthly charge trend",
+          "cypher": "MATCH (c:Charge)\nWHERE c.service_date IS NOT NULL\nRETURN c.service_date.year AS year,\n       c.service_date.month AS month,\n       count(c) AS charge_count,\n       round(sum(c.charge_amount), 2) AS total_charged\nORDER BY year, month\nLIMIT 100",
+          "latency_s": 1.1,
+          "score": 1.0,
+          "row_count": 96,
+          "problems": [],
+          "exec_error": null
+        },
+        {
+          "question": "Which patients have the highest outstanding balance?",
+          "cypher": "MATCH (p:Patient)\nWHERE p.outstanding_balance > 0\nRETURN p.patientId AS patient_id,\n       p.first_name AS first_name,\n       p.last_name AS last_name,\n       p.outstanding_balance AS balance,\n       p.payor_cohort AS cohort\nORDER BY balance DESC\nLIMIT 100",
+          "latency_s": 1.1,
+          "score": 1.0,
+          "row_count": 100,
+          "problems": [],
+          "exec_error": null
+        },
+        {
+          "question": "Average agent handle time on RC calls",
+          "cypher": "MATCH (rc:RCCall)\nWHERE rc.agent_time IS NOT NULL\nRETURN avg(rc.agent_time) AS avg_agent_handle_seconds,\n       avg(rc.total_time) AS avg_total_call_seconds,\n       avg(rc.agent_time) / avg(rc.total_time) AS avg_agent_ratio\nLIMIT 1",
+          "latency_s": 1.0,
+          "score": 1.0,
+          "row_count": 1,
+          "problems": [],
+          "exec_error": null
+        }
+      ]
+    },
+    {
+      "model": "text2cypher",
+      "mean_score": 1.0,
+      "results": [
+        {
+          "question": "How many patients?",
+          "cypher": "MATCH (p:Patient) RETURN count(p) AS patient_count LIMIT 100",
+          "latency_s": 3.7,
+          "score": 1.0,
+          "row_count": 1,
+          "problems": [],
+          "exec_error": null
+        },
+        {
+          "question": "What is the total outstanding balance grouped by payor cohort?",
+          "cypher": "MATCH (p:Patient)\nRETURN p.payor_cohort AS payor_cohort, round(sum(p.outstanding_balance), 2) AS total_outstanding_balance\nORDER BY total_outstanding_balance DESC",
+          "latency_s": 0.6,
+          "score": 1.0,
+          "row_count": 3,
+          "problems": [],
+          "exec_error": null
+        },
+        {
+          "question": "Give me patient visit trends",
+          "cypher": "MATCH (v:Visit) WHERE v.admit_date IS NOT NULL\nRETURN v.admit_date.year AS year, v.admit_date.month AS month, count(v) AS visit_count\nORDER BY year, month\nLIMIT 100",
+          "latency_s": 0.7,
+          "score": 1.0,
+          "row_count": 96,
+          "problems": [],
+          "exec_error": null
+        },
+        {
+          "question": "Which locations have the highest Birdeye average rating?",
+          "cypher": "MATCH (b:BirdeyeReview)-[:REVIEWS]->(l:Location)\nWHERE b.rating IS NOT NULL\nRETURN l.name AS location, round(avg(b.rating), 2) AS avg_rating, count(b) AS review_count\nORDER BY avg_rating DESC LIMIT 100",
+          "latency_s": 0.8,
+          "score": 1.0,
+          "row_count": 3,
+          "problems": [],
+          "exec_error": null
+        },
+        {
+          "question": "How many unique patients visited in the state of TX in 2023?",
+          "cypher": "MATCH (p:Patient)-[:HAD_VISIT]->(v:Visit)-[:PERFORMED_AT]->(l:Location)\nWHERE l.state = 'TX' AND v.admit_date IS NOT NULL AND v.admit_date.year = 2023\nRETURN count(DISTINCT p) AS unique_patients",
+          "latency_s": 0.9,
+          "score": 1.0,
+          "row_count": 1,
+          "problems": [],
+          "exec_error": null
+        },
+        {
+          "question": "Total bad debt by state",
+          "cypher": "MATCH (p:Patient)\nWHERE p.state IS NOT NULL\nRETURN p.state AS state, round(sum(p.adj_bad_debt), 2) AS total_bad_debt\nORDER BY total_bad_debt DESC",
+          "latency_s": 0.6,
+          "score": 1.0,
+          "row_count": 6,
+          "problems": [],
+          "exec_error": null
+        },
+        {
+          "question": "Reviews by location",
+          "cypher": "MATCH (b:BirdeyeReview)-[:REVIEWS]->(l:Location)\nRETURN l.name AS location, count(b) AS review_count, round(avg(b.rating), 2) AS avg_rating\nORDER BY review_count DESC LIMIT 100",
+          "latency_s": 0.8,
+          "score": 1.0,
+          "row_count": 3,
+          "problems": [],
+          "exec_error": null
+        },
+        {
+          "question": "Top 10 practices by patient count",
+          "cypher": "MATCH (p:Patient)-[:REGISTERED_AT]->(pr:Practice)\nRETURN pr.code AS practice, count(p) AS patient_count\nORDER BY patient_count DESC\nLIMIT 10",
+          "latency_s": 0.6,
+          "score": 1.0,
+          "row_count": 10,
+          "problems": [],
+          "exec_error": null
+        },
+        {
+          "question": "How many statements are on hold?",
+          "cypher": "MATCH (s:Statement)\nWHERE s.is_on_hold = true\nRETURN count(s) AS statement_count",
+          "latency_s": 0.4,
+          "score": 1.0,
+          "row_count": 1,
+          "problems": [],
+          "exec_error": null
+        },
+        {
+          "question": "How much was collected through IVR payments?",
+          "cypher": "MATCH (iv:IVRInbound)\nWHERE iv.amount_paid IS NOT NULL\nRETURN round(sum(iv.amount_paid), 2) AS total_collected_through_ivr_payments\nORDER BY total_collected_through_ivr_payments DESC LIMIT 100",
+          "latency_s": 0.7,
+          "score": 1.0,
+          "row_count": 1,
+          "problems": [],
+          "exec_error": null
+        },
+        {
+          "question": "What are the most common dialler call results?",
+          "cypher": "MATCH (d:DiallerCall)\nRETURN d.result_desc AS result, count(d) AS call_count\nORDER BY call_count DESC\nLIMIT 100",
+          "latency_s": 0.5,
+          "score": 1.0,
+          "row_count": 7,
+          "problems": [],
+          "exec_error": null
+        },
+        {
+          "question": "How many insurance plans does each practice have?",
+          "cypher": "MATCH (i:InsurancePlan)-[:ISSUED_BY_PRACTICE]->(pr:Practice)\nRETURN pr.code AS practice, count(i) AS plan_count\nORDER BY plan_count DESC LIMIT 100",
+          "latency_s": 0.6,
+          "score": 1.0,
+          "row_count": 44,
+          "problems": [],
+          "exec_error": null
+        },
+        {
+          "question": "Monthly charge trend",
+          "cypher": "MATCH (c:Charge) WHERE c.service_date IS NOT NULL\nRETURN c.service_date.year AS year, c.service_date.month AS month, count(c) AS charge_count, round(sum(c.charge_amount), 2) AS total_charged\nORDER BY year, month",
+          "latency_s": 0.8,
+          "score": 1.0,
+          "row_count": 96,
+          "problems": [],
+          "exec_error": null
+        },
+        {
+          "question": "Which patients have the highest outstanding balance?",
+          "cypher": "MATCH (p:Patient)\nWHERE p.outstanding_balance IS NOT NULL AND p.outstanding_balance > 0\nRETURN p.patientId AS patient_id, p.outstanding_balance AS balance, p.payor_cohort AS cohort\nORDER BY balance DESC LIMIT 100",
+          "latency_s": 0.8,
+          "score": 1.0,
+          "row_count": 100,
+          "problems": [],
+          "exec_error": null
+        },
+        {
+          "question": "Average agent handle time on RC calls",
+          "cypher": "MATCH (rc:RCCall)\nRETURN round(avg(rc.agent_time), 2) AS avg_agent_handle_time\nORDER BY avg_agent_handle_time DESC\nLIMIT 100",
+          "latency_s": 0.6,
+          "score": 1.0,
+          "row_count": 1,
+          "problems": [],
+          "exec_error": null
+        }
+      ]
+    }
+  ]
+}
