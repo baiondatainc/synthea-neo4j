@@ -84,6 +84,8 @@ def _is_title_request(body: dict, question: str) -> bool:
 async def _generate_title(question: str, model: str) -> str:
     """Short title via Ollama (llama3.2), echo fallback. No KG, no charts."""
     import httpx
+    settings = get_settings()
+
     payload = {
         "model": "llama3.2",
         "messages": [{"role": "user", "content": question}],
@@ -93,7 +95,7 @@ async def _generate_title(question: str, model: str) -> str:
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             r = await client.post(
-                "http://localhost:11434/v1/chat/completions", json=payload
+                settings.ollama_base_url + "/v1/chat/completions", json=payload
             )
             data = r.json()
             title = data["choices"][0]["message"]["content"].strip(' "\'.:\n')

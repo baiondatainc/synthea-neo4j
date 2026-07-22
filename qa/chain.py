@@ -61,7 +61,7 @@ from cache import get_answer_cache, make_cache_key
 from qa.router import route, Path
 from qa.hybrid_retriever import stream_hybrid_response
 from qa.cypher_autofix import autofix_cypher
-from querylog import log_query
+from qa.querylog import log_query
 
 logger = logging.getLogger(__name__)
 
