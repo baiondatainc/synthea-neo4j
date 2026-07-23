@@ -4,16 +4,29 @@
 # text2cypher prompt and used to swap codes for human-readable labels in
 # answer text and chart artifacts.
 #
-# UPDATED: fixed call_tier values, added payor_cohort missing codes,
-# added Practice.source_db translations, added Transaction.paysource values,
-# added property descriptions for all nodes, added relationship direction +
-# example Cypher paths for all relationships.
+# UPDATED (2026-07-23): merged patient_navigation_map backfill properties onto
+# Patient (rollups, dates, window metrics, adj buckets, call counts, has_* flags,
+# state/city), added schema_notes.patient_rollups + patient_geography,
+# reworded common_paths.patient_full_balance to prefer p.outstanding_balance,
+# raised schema_char_budget for the larger Patient section.
+#
+# PREREQUISITES for this version:
+#   1. Run: MATCH (p:Patient)
+#           REMOVE p.primary_plan_name, p.primary_carrier_name, p.primary_plan_type
+#      (duplicates of carrier_name / plan_name / plan_type)
+#   2. adj_charity_care is commented out — verify it exists before enabling:
+#      MATCH (p:Patient) WHERE p.adj_charity_care IS NOT NULL RETURN count(p)
+#   3. Patient.plan_type has NO values block — populate after checking:
+#      MATCH (p:Patient) RETURN DISTINCT p.plan_type LIMIT 20
+#
+# Deliberately NOT cataloged (exist in graph, hidden from model):
+#   active_window, bad_address_indicator, race, ethnicity, propensity_desc
 #
 # Keep this file authoritative — `catalog.py` loads it once at startup.
-# ── Token budget ──────────────────────────────────────────────────────────────
+
 # ── Token budget ──────────────────────────────────────────────────────────────
 token_budget:
-  schema_char_budget: 3600      # 900 tokens × 4 chars
+  schema_char_budget: 5000      # raised from 3600 — Patient now has ~65 props
   min_rel_budget: 200           # minimum chars remaining before adding rels
   min_path_budget: 150          # minimum chars remaining before adding paths
   max_values_shown: 4           # max value examples per property
@@ -22,7 +35,8 @@ token_budget:
 # ── Label keywords (drives schema_for_question selection) ────────────────────
 label_keywords:
   Patient:       ["patient", "patients", "cohort", "balance", "payor", "payer",
-                  "self-pay", "self pay", "sapa", "bai", "propensity", "bad debt"]
+                  "self-pay", "self pay", "sapa", "bai", "propensity", "bad debt",
+                  "state", "email", "phone", "not seen", "recency"]
   Visit:         ["visit", "encounter", "admission", "discharge", "modality",
                   "mri", "ct", "ultrasound", "imaging", "radiology","provider", "referring", "rendering", "doctor", "physician", "npi"]
   Charge:        ["charge", "charges", "cpt", "hcpcs", "procedure", "billed",
@@ -57,12 +71,15 @@ path_keywords:
   location_to_reviews:    ["review", "rating", "birdeye", "stars"]
   patient_full_balance:   ["balance", "outstanding", "owe", "total balance"]
   campaign_calls: ["campaign", "outreach", "recovery", "contact rate", "calls before"]
+
 labels:
   # ── Patient ──────────────────────────────────────────────────────────────
   Patient:
     description: >
       An RP patient with demographics, cohort flags, and rollup financials.
       patientId is the composite key: source_db + ':' + patient_id (e.g. RADM:1000000).
+      Carries precomputed rollups — prefer flat properties over traversal
+      for patient-level totals (see schema_notes.patient_rollups).
     pii:
       - first_name
       - middle_name
@@ -73,6 +90,7 @@ labels:
       - dob
       - zip
     properties:
+      # ── Identity ──
       patientId:
         description: "Composite patient key — source_db:patient_id (e.g. RADM:1000000). Primary lookup key."
       source_db:
@@ -89,23 +107,85 @@ labels:
           ACR:   "Advanced Clinical Radiology"
       patient_id:
         description: "Local numeric patient ID within the source practice."
-      first_name:
-        description: "Patient first name. PII — redact in public outputs."
-      last_name:
-        description: "Patient last name. PII — redact in public outputs."
-      dob:
-        description: "Date of birth (datetime). Use for age calculations: duration.inDays(p.dob, date()) / 365."
-      gender:
-        description: "Patient self-reported gender."
-        values:
-          F: "Female"
-          M: "Male"
+
+      # ── Geography (on Patient — no traversal needed) ──
+      state:
+        description: "Patient state code (e.g. TX, GA). Use for state grouping."
+      city:
+        description: "Patient city."
       zip:
-        description: "Patient ZIP code. Use for geographic filtering and state inference."
-      phone_norm:
-        description: "Normalized 10-digit phone number. PII."
-      email:
-        description: "Patient email address. PII."
+        description: "Patient ZIP code. Use for geographic filtering."
+
+      # ── Financial rollups (lifetime) ──
+      outstanding_balance:
+        description: "Total outstanding patient-pay balance in dollars."
+      total_charged:
+        description: "Lifetime dollars charged. Preferred over summing charges."
+      total_paid:
+        description: "Lifetime dollars paid. Preferred over summing transactions."
+      total_adjusted:
+        description: "Lifetime total adjustments (sum of all adj_* buckets)."
+      adj_bad_debt:
+        description: "Total amount written off to bad debt for this patient."
+      adj_contractual:
+        description: "Lifetime contractual write-offs."
+      adj_collection_agency:
+        description: "Lifetime collection-agency adjustments."
+      adj_refund_reversal:
+        description: "Lifetime refund/reversal adjustments."
+      adj_payment_plan:
+        description: "Lifetime payment-plan adjustments."
+      adj_other:
+        description: "Lifetime uncategorized adjustments."
+      # adj_charity_care: enable ONLY after verifying non-null in graph
+      # adj_charity_care:
+      #   description: "Lifetime charity-care write-offs."
+
+      # ── Activity counts ──
+      visit_count:
+        description: "Total number of visits across all practices."
+      charge_count:
+        description: "Total number of charge lines across all visits."
+      transaction_count:
+        description: "Total transactions. No HAS_TRANSACTION count needed."
+      statement_count:
+        description: "Total statements sent. No RECEIVED_STATEMENT count needed."
+      practice_count:
+        description: "Number of distinct practices this patient is registered in."
+
+      # ── Recency dates ──
+      first_visit_date:
+        description: "First visit date. Use for tenure / new-patient filters."
+      last_visit_date:
+        description: "Most recent visit date. Use for recency filters."
+      first_statement_date:
+        description: "First statement sent date."
+      last_statement_date:
+        description: "Most recent statement date. Use for statement aging."
+
+      # ── 12-month operational window ──
+      in_window_charged:
+        description: "Dollars charged in last 12 months."
+      in_window_paid:
+        description: "Dollars paid in last 12 months."
+      in_window_charge_count:
+        description: "Charge lines in last 12 months."
+      in_window_statement_count:
+        description: "Statements sent in last 12 months."
+
+      # ── Call rollups ──
+      total_calls_window:
+        description: "All calls in last 12 months. Preferred generic count."
+      rc_calls_window:
+        description: "RingCentral agent calls in last 12 months."
+      rv_in_calls_window:
+        description: "Inbound IVR calls in last 12 months."
+      rv_out_calls_window:
+        description: "Outbound dialler calls in last 12 months."
+      rc_attributed_calls:
+        description: "RingCentral calls attributed via phone match."
+
+      # ── Cohorts / segmentation ──
       payor_cohort:
         description: >
           Coarse payor classification derived from primary insurance.
@@ -141,22 +221,36 @@ labels:
         description: "True if patient is fully covered by insurance with minimal patient balance."
       is_bai:
         description: "True if patient is in the BCBS Affiliated, Inc. cohort."
+      is_sapa:
+        description: "In SAPA self-pay program cohort."
+      is_nraa:
+        description: "In NRAA cohort."
+      is_tennessee:
+        description: "In Tennessee cohort."
+      is_atlanta_404:
+        description: "In Atlanta 404 cohort."
       multi_practice_flag:
         description: "True if patient appears in more than one source practice."
+
+      # ── Existence flags ──
+      has_visits:
+        description: "Has at least one visit."
+      has_charges:
+        description: "Has at least one charge."
+      has_transactions:
+        description: "Has at least one transaction."
+      has_statements:
+        description: "Received at least one statement."
       has_any_calls:
         description: "True if patient has received at least one outbound call."
       has_insurance:
         description: "True if patient has at least one active insurance plan on file."
-      outstanding_balance:
-        description: "Total outstanding patient-pay balance in dollars."
-      adj_bad_debt:
-        description: "Total amount written off to bad debt for this patient."
-      practice_count:
-        description: "Number of distinct practices this patient is registered in."
-      visit_count:
-        description: "Total number of visits across all practices."
-      charge_count:
-        description: "Total number of charge lines across all visits."
+      has_email:
+        description: "Email on file. 'No email' -> WHERE NOT p.has_email."
+      has_phone:
+        description: "Phone number on file."
+
+      # ── Plan snapshot ──
       carrier_name:
         description: "Primary insurance carrier name (e.g. CIGNA, BCBS, UNITED)."
         values:
@@ -169,6 +263,30 @@ labels:
           MEDICAID: "Medicaid"
       plan_name:
         description: "Primary insurance plan name (e.g. CIGNA POS, BCBS INDEMNITY)."
+      plan_type:
+        description: "Primary plan type code from source (raw values)."
+        # TODO add values block after: MATCH (p:Patient) RETURN DISTINCT p.plan_type
+
+      # ── Demographics / PII (last so budget truncation cuts these first) ──
+      first_name:
+        description: "Patient first name. PII — redact in public outputs."
+      middle_name:
+        description: "Patient middle name. PII."
+      last_name:
+        description: "Patient last name. PII — redact in public outputs."
+      dob:
+        description: "Date of birth (datetime). Use for age calculations: duration.inDays(p.dob, date()) / 365."
+      gender:
+        description: "Patient self-reported gender."
+        values:
+          F: "Female"
+          M: "Male"
+      phone_norm:
+        description: "Normalized 10-digit phone number. PII."
+      cell_norm:
+        description: "Normalized cell number. PII."
+      email:
+        description: "Patient email address. PII."
 
   # ── Practice ─────────────────────────────────────────────────────────────
   Practice:
@@ -757,7 +875,7 @@ relationships:
     description: "BirdeyeReview is posted about a Location."
     from: BirdeyeReview
     to: Location
-    example: "MATCH (br:BirdeyeReview)-[:REVIEWS]->(l:Location)"  
+    example: "MATCH (br:BirdeyeReview)-[:REVIEWS]->(l:Location)"
   RUN_BY:
     description: "Campaign is run by a Practice."
     from: Campaign
@@ -780,13 +898,27 @@ relationships:
     example: "MATCH (dc:DiallerCall)-[:DIALLER_PART_OF_CAMPAIGN]->(cam:Campaign)"
 
 
-# ── Common multi-hop paths ────────────────────────────────────────────────────
+# ── Schema notes ──────────────────────────────────────────────────────────────
 #
-# Injected into the text2cypher prompt to guide the LLM on join chains
-# that are non-obvious from the schema alone. These are the paths most
-# commonly needed for medium and hard questions.
+# Free-text guidance injected into the prompt. NOT truncated at
+# max_prop_desc_chars — put hop-avoidance and disambiguation rules here.
 
 schema_notes:
+  patient_rollups: >
+    Patient nodes carry precomputed rollups. For patient-level totals ALWAYS
+    use the flat property instead of traversal + aggregation:
+    balance -> p.outstanding_balance, charged -> p.total_charged,
+    paid -> p.total_paid, bad debt -> p.adj_bad_debt, counts ->
+    p.visit_count / p.charge_count / p.transaction_count / p.statement_count.
+    Recency: p.last_visit_date (e.g. not seen in 12 months:
+    WHERE p.last_visit_date < date() - duration({months: 12})).
+    Use HAD_VISIT / HAS_CHARGE traversal ONLY for line-level detail
+    (by CPT, by location, by date range). Rollups are snapshots as of load.
+  patient_geography: >
+    Patient.state and Patient.city exist — state/city grouping needs NO
+    traversal: MATCH (p:Patient) RETURN p.state, sum(p.adj_bad_debt).
+    Traverse HAD_VISIT->PERFORMED_AT->Location only when the question is
+    about the LOCATION's state, not the patient's.
   provider: >
     There is NO Provider node. Provider/referring doctor info is stored
     as properties on Visit and Charge nodes:
@@ -798,6 +930,13 @@ schema_notes:
     2. Via relationship: (c:Charge)-[:USES_PROCEDURE]->(pc:ProcedureCode)
     Use inline c.cpt_code for simple filters. Use USES_PROCEDURE only when
     you need pc.description or pc.modality.
+
+# ── Common multi-hop paths ────────────────────────────────────────────────────
+#
+# Injected into the text2cypher prompt to guide the LLM on join chains
+# that are non-obvious from the schema alone. These are the paths most
+# commonly needed for medium and hard questions.
+
 common_paths:
   patient_to_carrier: >
     MATCH (p:Patient)-[:HAD_VISIT]->(v:Visit)-[:UNDER_PLAN]->(ip:InsurancePlan)
@@ -818,22 +957,24 @@ common_paths:
     MATCH (l:Location)<-[:REVIEWS]-(br:BirdeyeReview)
   age_from_dob: >
     // Patient age calculation — p.age does NOT exist, always compute from dob:
-    WITH duration.inDays(date(p.dob), date()).days / 365 AS age  
+    WITH duration.inDays(date(p.dob), date()).days / 365 AS age
   safe_month_compare: >
     // Safe month-over-month — handles year boundary:
     WHERE datetime(c.post_date) >= datetime() - duration({months: 1})
-    AND   datetime(c.post_date) <  datetime()  
+    AND   datetime(c.post_date) <  datetime()
   ar_aging_days: >
     // Days in A/R from service date to today:
-    WITH duration.inDays(date(c.service_date), date()).days AS days_in_ar  
+    WITH duration.inDays(date(c.service_date), date()).days AS days_in_ar
   time_series_monthly: >
     // Monthly trend pattern:
     WITH datetime(c.post_date).year AS yr, datetime(c.post_date).month AS mo
     RETURN yr, mo, count(*) AS n ORDER BY yr, mo
   patient_full_balance: >
-    MATCH (p:Patient)-[:HAS_CHARGE]->(c:Charge)
-    WHERE c.balance > 0
-    RETURN p.patientId, sum(c.balance) AS total_balance
+    // Patient-level balance: use the flat rollup — NO traversal:
+    MATCH (p:Patient) WHERE p.outstanding_balance > 0
+    RETURN p.patientId, p.outstanding_balance
+    // Charge-level balance detail ONLY (by CPT, location, date):
+    // MATCH (p:Patient)-[:HAS_CHARGE]->(c:Charge) WHERE c.balance > 0
   campaign_calls: >
     // Campaign call volume — direction is RCCall->Campaign not Campaign->RCCall:
     MATCH (rc:RCCall)-[:PART_OF_CAMPAIGN]->(cam:Campaign)
@@ -855,10 +996,6 @@ common_paths:
     MATCH (c:Charge)
     WHERE datetime(c.service_date).year = yr
     AND   ((datetime(c.service_date).month - 1) / 3) = qtr
-
-# ── Allowed topic patterns ────────────────────────────────────────────────────
-# Used by guardrails/input.py to reject off-topic or jailbreak-style questions.
-# Lower-case substring match on the incoming question text.
 
 # ── Allowed topic patterns ────────────────────────────────────────────────────
 # Used by guardrails/input.py to reject off-topic or jailbreak-style questions.
