@@ -220,12 +220,12 @@ def get_cypher_llm():
             # 8192 (was 4096): the Modelfile SYSTEM prompt (schema + ~55 few-shot
             # examples) is ~6k tokens. At 4096 it was truncated. NOTE: runtime
             # num_ctx OVERRIDES the Modelfile PARAMETER, so this is authoritative.
-            num_ctx=8192,
+            num_ctx=10240,
             keep_alive="24h",
         )
         logger.info(
             f"Cypher LLM initialised — model={settings.cypher_model!r}, "
-            f"num_ctx=8192, num_predict=256, keep_alive=24h"
+            f"num_ctx=10240, num_predict=256, keep_alive=24h"
         )
         _CYPHER_LLM_CACHE = llm
         return llm
