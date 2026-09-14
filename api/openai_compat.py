@@ -856,7 +856,7 @@ async def list_models():
     return {
         "object": "list",
         "data": [
-            {"id": "radiologyPartner-kg", "object": "model", "created": now, "owned_by": "rp"},
+            {"id": "radiologyPartner-kg", "object": "model", "created": now, "owned_by": "ia"},
             {"id": "neo4j-kg",            "object": "model", "created": now, "owned_by": "synthea-neo4j"},
         ],
     }

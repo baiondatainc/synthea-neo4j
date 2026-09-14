@@ -1,3 +1,0 @@
-{"id": "Q01", "category": "policy", "question": "How many policies?", "passed": false, "detail": "API error: ", "latency_s": 0}
-{"id": "Q05", "category": "policy", "question": "Top 10 insurers by number of policies", "passed": false, "detail": "API error: ", "latency_s": 0}
-{"id": "Q19", "category": "claims", "question": "How many claims?", "passed": false, "detail": "API error: ", "latency_s": 0}
