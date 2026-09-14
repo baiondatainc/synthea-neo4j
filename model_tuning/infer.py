@@ -30,7 +30,7 @@ from runtime.guardrails import check_cypher
 from runtime.redaction import redact_rows
 
 SYSTEM_PROMPT = (
-    "You are an expert Cypher query generator for the RP knowledge graph.\n\n"
+    "You are an expert Cypher query generator for the current insurance-policy Neo4j graph.\n\n"
     "Rules:\n"
     "- Output ONLY valid Cypher. No markdown, no explanation.\n"
     "- Every query must have a LIMIT clause.\n"
@@ -39,18 +39,19 @@ SYSTEM_PROMPT = (
     "- Read-only only: no CREATE, MERGE, SET, DELETE, REMOVE.\n"
     "- One MATCH statement per query.\n\n"
     "Schema summary:\n"
-    "  Nodes: Patient, Visit, Charge, Transaction, Statement,\n"
-    "         PhoneBridge, RCCall, IVRInbound, DiallerCall,\n"
-    "         Location, InsurancePlan, Practice, Campaign,\n"
-    "         DiagnosisCode, ProcedureCode, BirdeyeReview\n"
+    "  Nodes: Policy, Policyholder, Claim, Vehicle, Product, DistributionChannel,\n"
+    "         HealthClaimLine, BenefitClass, HealthMember, DiagnosisCode,\n"
+    "         PreAuthorization, Accident, DamageAssessment, Reinsurer,\n"
+    "         PolicyEvent, Agent, Insurer, Claimant, IAProduct\n"
     "  Key paths:\n"
-    "    (Patient)-[:HAD_VISIT]->(Visit)-[:PERFORMED_AT]->(Location)\n"
-    "    (Patient)-[:HAS_CHARGE]->(Charge)<-[:SETTLES]-(Transaction)\n"
-    "    (Patient)-[:IDENTIFIED_BY_PHONE]->(PhoneBridge)<-[:ATTRIBUTED_TO_PHONE]-(RCCall)\n"
-    "    (Charge)-[:PART_OF_VISIT]->(Visit)-[:UNDER_PLAN]->(InsurancePlan)\n"
-    "    (Charge)-[:AT_LOCATION]->(Location)-[:BELONGS_TO_PRACTICE]->(Practice)\n"
-    "    (Charge)-[:DIAGNOSED_WITH]->(DiagnosisCode)\n"
-    "    (Charge)-[:USES_PROCEDURE]->(ProcedureCode)\n"
+    "    (Policy)-[:UNDER_POLICY]->(Claim)\n"
+    "    (Policy)-[:HAS_PRODUCT]->(Product)\n"
+    "    (Policy)-[:OWNED_BY]->(Policyholder)\n"
+    "    (Policy)-[:SOLD_VIA]->(DistributionChannel)\n"
+    "    (Claim)-[:HAS_SERVICE_LINE]->(HealthClaimLine)\n"
+    "    (Claim)-[:HAS_PRE_AUTH]->(PreAuthorization)\n"
+    "    (Vehicle)-[:INSURED_UNDER]->(Policy)\n"
+    "    (Policy)-[:REINSURED_BY]->(Reinsurer)\n"
 )
 
 

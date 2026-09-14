@@ -12,8 +12,8 @@ from __future__ import annotations
 import re
 
 from config import get_settings
-from metadata.catalog import get_catalog
 from guardrails import GuardrailResult
+from guardrails.schema_ia import allowed_labels, allowed_relationships
 
 WRITE_CLAUSES = re.compile(
     r"\b(CREATE|DELETE|MERGE|SET|REMOVE|DROP|DETACH\s+DELETE)\b",
@@ -73,15 +73,14 @@ def _check_readonly(cypher: str) -> str | None:
 
 
 def _check_schema(cypher: str) -> str | None:
-    catalog = get_catalog()
-    allowed_labels = set(catalog.labels.keys())
-    allowed_rels = set(catalog.relationships.keys())
+    labels = allowed_labels()
+    rels = allowed_relationships()
 
     used_labels = set(NODE_LABEL_RE.findall(cypher))
     used_rels = set(REL_TYPE_RE.findall(cypher))
 
-    unknown_labels = used_labels - allowed_labels
-    unknown_rels = used_rels - allowed_rels
+    unknown_labels = used_labels - labels
+    unknown_rels = used_rels - rels
 
     if unknown_labels:
         return f"Cypher references unknown label(s): {sorted(unknown_labels)}"

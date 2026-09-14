@@ -1,0 +1,312 @@
+nodes:
+  IAProduct:
+    name: String
+    insurance_authority_product_id: String
+  Policy:
+    policy_number: String
+    policy_type: String
+    main_type: String
+    general_line_of_business: String
+    line_of_business: String
+    policy_status: String
+    is_active: Boolean
+    is_cancelled: Boolean
+    is_reinsured: Boolean
+    is_direct: Boolean
+    issue_date: DateTime
+    effect_date: DateTime
+    renewal_date: DateTime
+    expiry_date: DateTime
+    cancellation_date: DateTime
+    cancellation_reason: String
+    policy_term_days: Long
+    effect_year: Long
+    effect_month: String
+    product_count: Long
+    gross_written_premium: Double
+    net_written_premium: Double
+    commission: Double
+    event_count: Long
+    renewal_count: Long
+    claim_count: Long
+    total_approved: Double
+    max_fraud_probability: Double
+    policy_id: String
+    total_paid: Double
+    open_claim_count: Long
+    avg_settlement_days: Double
+    reported_loss_ratio: Double
+    vehicle_count: Long
+    calculated_loss_ratio_pct: Double
+    last_event_type: String
+    total_outstanding: Double
+    fraud_flagged_claim_count: Long
+    total_claimed: Double
+    reinsurance_agreement_count: Long
+    health_member_count: Long
+  PreAuthorization:
+    pre_authorization_id: String
+    fraud_suspicion_indicator: Boolean
+    amount_rejected: Double
+    pre_authorization_number: String
+    pre_authorization_status: String
+    approved_amount: Double
+    pre_authorization_creation_date: DateTime
+    pre_authorization_amount: Double
+    adjudication_outcome: String
+    fraud_probability: Double
+  DiagnosisCode:
+    code: String
+  Product:
+    is_active: Boolean
+    name: String
+    product_mapping_id: String
+    end_date: Date
+    approval_date: Date
+    ia_product_name: String
+  DistributionChannel:
+    name: String
+    is_broker: Boolean
+    is_local: Boolean
+    name_arab: String
+    channel_type: String
+    region: String
+    country: String
+    channel_id: String
+    is_agency: Boolean
+    city: String
+    is_tpa: Boolean
+  HealthMember:
+    is_policyholder: Boolean
+    inception_date_for_member: DateTime
+    is_primary: Boolean
+    gender: String
+    employment_status: String
+    policy_product_id: Long
+    nationality: String
+    age_years: Long
+    beneficiary_number: String
+    member_id: String
+    date_of_birth: Date
+    city: String
+    relationship_with_primary: String
+    marital_status: String
+  HealthClaimLine:
+    claim_type: String
+    unit_price: Double
+    product_service: String
+    quantity: Long
+    net_amount: Double
+    service_date: DateTime
+    tax_amount: Double
+    patient_share_amount: Double
+    health_claim_id: String
+    payer_share_amount: Double
+    sub_type: String
+    currency: String
+  BenefitClass:
+    name: String
+    class_type: String
+    class_id: String
+    class_status: String
+  Vehicle:
+    ai_assisted_driving_function: Boolean
+    usage_type: String
+    license_plate_number: String
+    is_imported: Boolean
+    is_non_claim_discount_applied: Boolean
+    policy_product_id: Long
+    seat_number: Long
+    manufacturer: String
+    region_registration: String
+    is_corporate: Boolean
+    vehicle_model_year: Long
+    is_ev: Boolean
+    year_manufactured: Long
+    vehicle_id: String
+    vehicle_type: String
+    is_new_vehicle: Boolean
+    plate_type_eng: String
+    vehicle_model: String
+    coverage_type: String
+    effect_date_for_vehicle: DateTime
+    chassis_number: String
+  Accident:
+    accident_id: String
+    longitude: Double
+    injury_count: Long
+    accident_datetime: DateTime
+    accident_case_number: String
+    source: String
+    latitude: Double
+    parties_count: Long
+    city: String
+    fatality_count: Long
+  Reinsurer:
+    name: String
+    is_local: Boolean
+    ia_id: String
+    name_arab: String
+    country: String
+    reinsurer_id: String
+  PolicyEvent:
+    event_date: DateTime
+    policy_event_id: String
+    reason: String
+    event_status: String
+    event_type: String
+    triggered_by: String
+  Policyholder:
+    name: String
+    source_id: Long
+    identity_type: String
+    vat_no: String
+    gender: String
+    phone: String
+    country: String
+    nationality: String
+    cr_id: String
+    identity_number: String
+    city: String
+    policyholder_sk: String
+    email: String
+    employee_count: Long
+    source_table: String
+    policyholder_type: String
+    lob: String
+    region: String
+    date_of_birth: DateTime
+  Claimant:
+    claimant_identity_type: String
+    claimant_type: String
+    claimant_id: String
+    claimant_identity_number: String
+  DamageAssessment:
+    spare_parts_cost: Double
+    total_cost_with_vat: Double
+    center_city: String
+    da_center: String
+    da_initiated_date: DateTime
+    labor_cost: Double
+    damage_type: String
+    da_completed_date: DateTime
+    damage_assessment_id: String
+  Insurer:
+    name: String
+    lines_of_business: String
+    cr_id: String
+    country: String
+    is_motor: Boolean
+    is_p_c: Boolean
+    city: String
+    ia_id: String
+    insurer_id: String
+    short_name: String
+    employee_count: Long
+    number_of_branches: Long
+    is_health: Boolean
+    is_local: Boolean
+    is_p_s: Boolean
+    name_arab: String
+    region: String
+    saudization_pct: Double
+  Claim:
+    is_open: Boolean
+    claim_lob: String
+    days_into_policy: Long
+    deductible_applied: Double
+    claim_creation_date: DateTime
+    copay_amount: Double
+    adjudication_outcome: String
+    pre_auth_approved: Double
+    patient_share_amount: Double
+    health_net_amount: Double
+    claim_status: String
+    paid_rate_pct: Double
+    approved_amount: Double
+    amount_paid: Double
+    claim_month: String
+    claim_year: Long
+    tax: Double
+    damage_types: String
+    pre_auth_requested: Double
+    payer_share_amount: Double
+    damage_assessment_count: Long
+    service_line_count: Long
+    fraud_suspicion_indicator: Boolean
+    amount_outstanding: Double
+    claim_id: String
+    est_total_repair_cost_with_vat: Double
+    claim_source: String
+    last_payment_date: DateTime
+    claim_number: String
+    fraud_probability: Double
+    claim_resolution_date: DateTime
+    total_injuries: Double
+    accident_count: Long
+    rejection_reason: String
+    total_fatalities: Double
+    amount_rejected: Double
+    diagnosis_codes: String
+    claimed_amount: Double
+    pre_auth_count: Long
+    settlement_days: Long
+    approval_rate_pct: Double
+  Agent:
+    name: String
+    employment_type: String
+    specialization: String
+    years_of_experience: Long
+    hired_date: DateTime
+    agent_id: String
+relationships:
+  REGULATED_AS: {}
+  SPONSORED_BY: {}
+  COVERED_BY: {}
+  INVOLVES_ACCIDENT: {}
+  ASSESSED_BY: {}
+  ISSUED_BY: {}
+  SOLD_VIA: {}
+  OWNED_BY: {}
+  HAS_EVENT: {}
+  IN_CLASS: {}
+  DIAGNOSED_WITH: {}
+  UNDER_POLICY:
+    policy_product_id: Long
+  HAS_PRE_AUTH: {}
+  FILED_BY: {}
+  WORKS_FOR: {}
+  HAS_PRODUCT:
+    policy_product_id: Long
+  INSURED_UNDER: {}
+  HAS_SERVICE_LINE: {}
+  REINSURED_BY:
+    expiry_date: DateTime
+    agreement_id: Long
+    quota_share_percentage: Double
+    excess_of_loss_limit: Double
+    effective_date: DateTime
+    coverage_type: String
+    agreement_type: String
+  FOR_PRODUCT: {}
+patterns:
+- '(Accident)-[:ASSESSED_BY]->(DamageAssessment)  # 726'
+- '(Agent)-[:WORKS_FOR]->(DistributionChannel)  # 71'
+- '(Claim)-[:FILED_BY]->(Claimant)  # 2727'
+- '(Claim)-[:FOR_PRODUCT]->(Product)  # 2689'
+- '(Claim)-[:HAS_PRE_AUTH]->(PreAuthorization)  # 1425'
+- '(Claim)-[:HAS_SERVICE_LINE]->(HealthClaimLine)  # 889'
+- '(Claim)-[:INVOLVES_ACCIDENT]->(Accident)  # 710'
+- '(Claim)-[:UNDER_POLICY]->(Policy)  # 2689'
+- '(HealthClaimLine)-[:DIAGNOSED_WITH]->(DiagnosisCode)  # 1000'
+- '(HealthMember)-[:COVERED_BY]->(Policy)  # 1795'
+- '(HealthMember)-[:IN_CLASS]->(BenefitClass)  # 1786'
+- '(HealthMember)-[:SPONSORED_BY]->(Policyholder)  # 1815'
+- '(Policy)-[:HAS_EVENT]->(PolicyEvent)  # 2156'
+- '(Policy)-[:HAS_PRODUCT]->(Product)  # 1600'
+- '(Policy)-[:ISSUED_BY]->(Insurer)  # 1457'
+- '(Policy)-[:REINSURED_BY]->(Reinsurer)  # 815'
+- '(Policy)-[:SOLD_VIA]->(DistributionChannel)  # 1429'
+- '(Product)-[:REGULATED_AS]->(IAProduct)  # 240'
+- '(Vehicle)-[:INSURED_UNDER]->(Policy)  # 1279'
+- '(Vehicle)-[:OWNED_BY]->(Policyholder)  # 1400'

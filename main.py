@@ -62,24 +62,24 @@ def cmd_schema():
 def cmd_stats():
     from graph.connection import Neo4jConnection
 
-    # ── RP Knowledge Graph node labels ────────────────────────────────
+    # ── Neo4j policy graph node labels ────────────────────────────────
     node_queries = {
-        "Patient":       "MATCH (n:Patient) RETURN count(n) AS c",
-        "Practice":      "MATCH (n:Practice) RETURN count(n) AS c",
-        "Location":      "MATCH (n:Location) RETURN count(n) AS c",
-        "InsurancePlan": "MATCH (n:InsurancePlan) RETURN count(n) AS c",
-        "Visit":         "MATCH (n:Visit) RETURN count(n) AS c",
-        "Charge":        "MATCH (n:Charge) RETURN count(n) AS c",
-        "Transaction":   "MATCH (n:Transaction) RETURN count(n) AS c",
-        "Statement":     "MATCH (n:Statement) RETURN count(n) AS c",
-        "DiagnosisCode": "MATCH (n:DiagnosisCode) RETURN count(n) AS c",
-        "ProcedureCode": "MATCH (n:ProcedureCode) RETURN count(n) AS c",
-        "RCCall":        "MATCH (n:RCCall) RETURN count(n) AS c",
-        "IVRInbound":    "MATCH (n:IVRInbound) RETURN count(n) AS c",
-        "DiallerCall":   "MATCH (n:DiallerCall) RETURN count(n) AS c",
-        "PhoneBridge":   "MATCH (n:PhoneBridge) RETURN count(n) AS c",
-        "Campaign":      "MATCH (n:Campaign) RETURN count(n) AS c",
-        "BirdeyeReview": "MATCH (n:BirdeyeReview) RETURN count(n) AS c",
+        "Policy":             "MATCH (n:Policy) RETURN count(n) AS c",
+        "Policyholder":       "MATCH (n:Policyholder) RETURN count(n) AS c",
+        "Claim":              "MATCH (n:Claim) RETURN count(n) AS c",
+        "HealthMember":       "MATCH (n:HealthMember) RETURN count(n) AS c",
+        "Vehicle":            "MATCH (n:Vehicle) RETURN count(n) AS c",
+        "Product":            "MATCH (n:Product) RETURN count(n) AS c",
+        "Insurer":            "MATCH (n:Insurer) RETURN count(n) AS c",
+        "DistributionChannel": "MATCH (n:DistributionChannel) RETURN count(n) AS c",
+        "HealthClaimLine":    "MATCH (n:HealthClaimLine) RETURN count(n) AS c",
+        "PreAuthorization":   "MATCH (n:PreAuthorization) RETURN count(n) AS c",
+        "PolicyEvent":        "MATCH (n:PolicyEvent) RETURN count(n) AS c",
+        "Accident":           "MATCH (n:Accident) RETURN count(n) AS c",
+        "BenefitClass":       "MATCH (n:BenefitClass) RETURN count(n) AS c",
+        "DiagnosisCode":      "MATCH (n:DiagnosisCode) RETURN count(n) AS c",
+        "Reinsurer":         "MATCH (n:Reinsurer) RETURN count(n) AS c",
+        "DamageAssessment":   "MATCH (n:DamageAssessment) RETURN count(n) AS c",
     }
 
     print("\n📊 RP Knowledge Graph — Node Counts")
@@ -108,28 +108,31 @@ def cmd_stats():
 
     # ── Financial summary ─────────────────────────────────────────────
     fin = Neo4jConnection.run_query("""
-        MATCH (p:Patient)
-        RETURN sum(p.total_charged)        AS charged,
-               sum(p.total_paid)           AS paid,
-               sum(p.outstanding_balance)  AS outstanding,
-               sum(p.adj_bad_debt)         AS bad_debt
+        MATCH (p:Policy)
+        RETURN sum(coalesce(p.total_claimed, 0)) AS claimed,
+               sum(coalesce(p.total_paid, 0)) AS paid,
+               sum(coalesce(p.total_outstanding, 0)) AS outstanding,
+               sum(coalesce(p.commission, 0)) AS commission
     """)
-    if fin and fin[0]["charged"]:
+    if fin and fin[0]["claimed"]:
         f = fin[0]
-        print("\n💰 Financial Summary")
+        print("\n💰 Policy Financial Summary")
         print("─" * 40)
-        print(f"  {'Total Charged':<20} ${f['charged'] or 0:>14,.0f}")
+        print(f"  {'Total Claimed':<20} ${f['claimed'] or 0:>14,.0f}")
         print(f"  {'Total Paid':<20} ${f['paid'] or 0:>14,.0f}")
         print(f"  {'Outstanding':<20} ${f['outstanding'] or 0:>14,.0f}")
-        print(f"  {'Bad Debt':<20} ${f['bad_debt'] or 0:>14,.0f}")
+        print(f"  {'Commission':<20} ${f['commission'] or 0:>14,.0f}")
     print()
 
 
 def cmd_vectorize(force: bool = False, limit: int = 1_000_000):
-    """Embed every Patient with sentence-transformers + write to Neo4j vector index."""
-    from semantic.embeddings import vectorize_patients
-    summary = vectorize_patients(force=force, limit=limit)
-    print(f"\n✓ Vectorize complete: {summary}\n")
+    """Policy-graph placeholder: the embedding pipeline still needs to be rebuilt for the new node model."""
+    try:
+        from semantic.embeddings import vectorize_patients
+        summary = vectorize_patients(force=force, limit=limit)
+        print(f"\n✓ Vectorize complete: {summary}\n")
+    except Exception as exc:
+        print(f"\n⚠ Vectorization is not yet mapped to the policy graph: {exc}\n")
 
 
 def cmd_clearcache(question: str | None = None):

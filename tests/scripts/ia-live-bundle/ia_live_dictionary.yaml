@@ -1,0 +1,602 @@
+catalog:
+  name: IA Insurance Knowledge Graph (live)
+  version: live-1.0
+  generated: '2026-09-14'
+  source: db.schema dump of bolt://localhost:7687
+schema_notes:
+  rollups: Policy and Claim carry precomputed rollups (claim_count, total_paid, settlement_days, days_into_policy, ...). Use
+    the flat property for policy-level or claim-level totals; traverse only for per-entity breakdowns.
+  claims_to_insurer: (Claim)-[:UNDER_POLICY]->(Policy)-[:ISSUED_BY]->(Insurer). ~10% of claims have no UNDER_POLICY edge.
+  pre_auth: PreAuthorization is reachable ONLY through (Claim)-[:HAS_PRE_AUTH]->; there is no policy edge on it.
+  policyholder: 'One Policyholder label for individuals and organisations (policyholder_type). Motor policyholders: (Vehicle)-[:OWNED_BY]->(Policyholder).
+    Health sponsors: (HealthMember)-[:SPONSORED_BY]->(Policyholder).'
+  dates: DateTime properties use dot notation (p.issue_date.year) and compare with datetime(). Date properties (HealthMember.date_of_birth,
+    Product.approval_date/end_date) compare with date().
+  geography: No City/Region nodes - city/region are string properties on Insurer, DistributionChannel, Policyholder, HealthMember,
+    Accident, DamageAssessment.center_city.
+  value_sets: Statuses/enums are NOT enumerated here. Profile with SELECT DISTINCT before injecting into the prompt.
+  not_modelled: Premium is a Policy property (gross_written_premium), not a node. No SparePart, Contract, Membership, HCPNetwork,
+    HealthcareProvider labels in this load.
+node_labels:
+  Policy:
+    description: Insurance policy - the anchor node. Carries premium, loss-ratio and claim ROLLUPS.
+    key: policy_id (surrogate); policy_number is the business key
+    properties:
+      policy_id: String
+      policy_number: String
+      policy_type: String
+      main_type: String
+      general_line_of_business: String
+      line_of_business: String
+      policy_status: String
+      is_active: Boolean
+      is_cancelled: Boolean
+      is_reinsured: Boolean
+      is_direct: Boolean
+      issue_date: DateTime
+      effect_date: DateTime
+      renewal_date: DateTime
+      expiry_date: DateTime
+      cancellation_date: DateTime
+      cancellation_reason: String
+      policy_term_days: Long
+      effect_year: Long
+      effect_month: String
+      gross_written_premium: Double
+      net_written_premium: Double
+      commission: Double
+      reported_loss_ratio: Double
+      calculated_loss_ratio_pct: Double
+      product_count: Long
+      event_count: Long
+      last_event_type: String
+      renewal_count: Long
+      claim_count: Long
+      open_claim_count: Long
+      fraud_flagged_claim_count: Long
+      max_fraud_probability: Double
+      total_claimed: Double
+      total_approved: Double
+      total_paid: Double
+      total_outstanding: Double
+      avg_settlement_days: Double
+      vehicle_count: Long
+      health_member_count: Long
+      reinsurance_agreement_count: Long
+    rollups:
+    - claim_count
+    - open_claim_count
+    - fraud_flagged_claim_count
+    - total_claimed
+    - total_approved
+    - total_paid
+    - total_outstanding
+    - avg_settlement_days
+    - renewal_count
+    - event_count
+    - vehicle_count
+    - health_member_count
+    - calculated_loss_ratio_pct
+    relationships_out:
+    - -[:ISSUED_BY]->(:Insurer)
+    - -[:SOLD_VIA]->(:DistributionChannel)
+    - -[:HAS_PRODUCT]->(:Product)
+    - -[:REINSURED_BY]->(:Reinsurer)
+    - -[:HAS_EVENT]->(:PolicyEvent)
+    relationships_in:
+    - <-[:COVERED_BY]-(:HealthMember)
+    - <-[:INSURED_UNDER]-(:Vehicle)
+    - <-[:UNDER_POLICY]-(:Claim)
+  Insurer:
+    description: Licensed insurance company.
+    key: insurer_id; ia_id is the IA licence
+    properties:
+      insurer_id: String
+      ia_id: String
+      name: String
+      name_arab: String
+      short_name: String
+      cr_id: String
+      city: String
+      region: String
+      country: String
+      is_local: Boolean
+      is_health: Boolean
+      is_motor: Boolean
+      is_p_c: Boolean
+      is_p_s: Boolean
+      lines_of_business: String
+      employee_count: Long
+      saudization_pct: Double
+      number_of_branches: Long
+    rollups:
+    - saudization_pct
+    - lines_of_business
+    relationships_out: []
+    relationships_in:
+    - <-[:ISSUED_BY]-(:Policy)
+  Reinsurer:
+    description: Reinsurance company.
+    key: reinsurer_id
+    properties:
+      reinsurer_id: String
+      ia_id: String
+      name: String
+      name_arab: String
+      country: String
+      is_local: Boolean
+    rollups: []
+    relationships_out: []
+    relationships_in:
+    - <-[:REINSURED_BY]-(:Policy)
+  DistributionChannel:
+    description: Broker / agency / TPA that sold the policy.
+    key: channel_id
+    properties:
+      channel_id: String
+      name: String
+      name_arab: String
+      channel_type: String
+      is_broker: Boolean
+      is_agency: Boolean
+      is_tpa: Boolean
+      is_local: Boolean
+      city: String
+      region: String
+      country: String
+    rollups: []
+    relationships_out: []
+    relationships_in:
+    - <-[:SOLD_VIA]-(:Policy)
+    - <-[:WORKS_FOR]-(:Agent)
+  Agent:
+    description: Individual agent working for a channel. Not linked to policies (source gap).
+    key: agent_id
+    properties:
+      agent_id: String
+      name: String
+      employment_type: String
+      specialization: String
+      years_of_experience: Long
+      hired_date: DateTime
+    rollups: []
+    relationships_out:
+    - -[:WORKS_FOR]->(:DistributionChannel)
+    relationships_in: []
+  Product:
+    description: Insurer's commercial product, mapped to an IA product.
+    key: product_mapping_id
+    properties:
+      product_mapping_id: String
+      name: String
+      ia_product_name: String
+      is_active: Boolean
+      approval_date: Date
+      end_date: Date
+    rollups: []
+    relationships_out:
+    - -[:REGULATED_AS]->(:IAProduct)
+    relationships_in:
+    - <-[:HAS_PRODUCT]-(:Policy)
+    - <-[:FOR_PRODUCT]-(:Claim)
+  IAProduct:
+    description: Product in the Insurance Authority catalogue.
+    key: insurance_authority_product_id
+    properties:
+      insurance_authority_product_id: String
+      name: String
+    rollups: []
+    relationships_out: []
+    relationships_in:
+    - <-[:REGULATED_AS]-(:Product)
+  Policyholder:
+    description: Party holding a policy - individual OR organisation (policyholder_type).
+    key: policyholder_sk
+    properties:
+      policyholder_sk: String
+      name: String
+      policyholder_type: String
+      lob: String
+      identity_type: String
+      identity_number: String
+      cr_id: String
+      vat_no: String
+      gender: String
+      date_of_birth: DateTime
+      nationality: String
+      city: String
+      region: String
+      country: String
+      employee_count: Long
+      phone: String
+      email: String
+      source_table: String
+      source_id: Long
+    rollups: []
+    relationships_out: []
+    relationships_in:
+    - <-[:SPONSORED_BY]-(:HealthMember)
+    - <-[:OWNED_BY]-(:Vehicle)
+  HealthMember:
+    description: Health-insured person (primary or dependent).
+    key: member_id
+    properties:
+      member_id: String
+      beneficiary_number: String
+      is_primary: Boolean
+      is_policyholder: Boolean
+      relationship_with_primary: String
+      gender: String
+      date_of_birth: Date
+      age_years: Long
+      nationality: String
+      city: String
+      marital_status: String
+      employment_status: String
+      inception_date_for_member: DateTime
+      policy_product_id: Long
+    rollups:
+    - age_years
+    relationships_out:
+    - -[:COVERED_BY]->(:Policy)
+    - -[:SPONSORED_BY]->(:Policyholder)
+    - -[:IN_CLASS]->(:BenefitClass)
+    relationships_in: []
+  BenefitClass:
+    description: Benefit tier of a health member (e.g. VIP, A, B).
+    key: class_id
+    properties:
+      class_id: String
+      name: String
+      class_type: String
+      class_status: String
+    rollups: []
+    relationships_out: []
+    relationships_in:
+    - <-[:IN_CLASS]-(:HealthMember)
+  Vehicle:
+    description: Insured vehicle.
+    key: vehicle_id
+    properties:
+      vehicle_id: String
+      license_plate_number: String
+      plate_type_eng: String
+      chassis_number: String
+      manufacturer: String
+      vehicle_model: String
+      vehicle_model_year: Long
+      year_manufactured: Long
+      vehicle_type: String
+      usage_type: String
+      coverage_type: String
+      seat_number: Long
+      region_registration: String
+      is_ev: Boolean
+      ai_assisted_driving_function: Boolean
+      is_new_vehicle: Boolean
+      is_corporate: Boolean
+      is_imported: Boolean
+      is_non_claim_discount_applied: Boolean
+      effect_date_for_vehicle: DateTime
+      policy_product_id: Long
+    rollups: []
+    relationships_out:
+    - -[:INSURED_UNDER]->(:Policy)
+    - -[:OWNED_BY]->(:Policyholder)
+    relationships_in: []
+  Claim:
+    description: Claim under a policy. Carries health/motor ROLLUPS (settlement_days, days_into_policy, repair cost, shares).
+    key: claim_id; claim_number is the business key
+    properties:
+      claim_id: String
+      claim_number: String
+      claim_lob: String
+      claim_status: String
+      is_open: Boolean
+      adjudication_outcome: String
+      claim_source: String
+      claim_creation_date: DateTime
+      claim_year: Long
+      claim_month: String
+      claim_resolution_date: DateTime
+      last_payment_date: DateTime
+      settlement_days: Long
+      days_into_policy: Long
+      claimed_amount: Double
+      approved_amount: Double
+      amount_paid: Double
+      amount_rejected: Double
+      amount_outstanding: Double
+      copay_amount: Double
+      deductible_applied: Double
+      tax: Double
+      approval_rate_pct: Double
+      paid_rate_pct: Double
+      rejection_reason: String
+      fraud_suspicion_indicator: Boolean
+      fraud_probability: Double
+      pre_auth_count: Long
+      pre_auth_requested: Double
+      pre_auth_approved: Double
+      service_line_count: Long
+      health_net_amount: Double
+      patient_share_amount: Double
+      payer_share_amount: Double
+      diagnosis_codes: String
+      accident_count: Long
+      damage_assessment_count: Long
+      est_total_repair_cost_with_vat: Double
+      damage_types: String
+      total_injuries: Double
+      total_fatalities: Double
+    rollups:
+    - settlement_days
+    - days_into_policy
+    - claim_year
+    - claim_month
+    - is_open
+    - approval_rate_pct
+    - paid_rate_pct
+    - health_net_amount
+    - patient_share_amount
+    - payer_share_amount
+    - est_total_repair_cost_with_vat
+    - diagnosis_codes
+    - damage_types
+    - pre_auth_count
+    relationships_out:
+    - -[:UNDER_POLICY]->(:Policy)
+    - -[:FOR_PRODUCT]->(:Product)
+    - -[:FILED_BY]->(:Claimant)
+    - -[:HAS_PRE_AUTH]->(:PreAuthorization)
+    - -[:HAS_SERVICE_LINE]->(:HealthClaimLine)
+    - -[:INVOLVES_ACCIDENT]->(:Accident)
+    relationships_in: []
+  Claimant:
+    description: Party that filed the claim.
+    key: claimant_id
+    properties:
+      claimant_id: String
+      claimant_type: String
+      claimant_identity_type: String
+      claimant_identity_number: String
+    rollups: []
+    relationships_out: []
+    relationships_in:
+    - <-[:FILED_BY]-(:Claim)
+  PreAuthorization:
+    description: Prior approval of a health service. Reached ONLY via Claim-[:HAS_PRE_AUTH].
+    key: pre_authorization_id
+    properties:
+      pre_authorization_id: String
+      pre_authorization_number: String
+      pre_authorization_status: String
+      adjudication_outcome: String
+      pre_authorization_creation_date: DateTime
+      pre_authorization_amount: Double
+      approved_amount: Double
+      amount_rejected: Double
+      fraud_suspicion_indicator: Boolean
+      fraud_probability: Double
+    rollups: []
+    relationships_out: []
+    relationships_in:
+    - <-[:HAS_PRE_AUTH]-(:Claim)
+  HealthClaimLine:
+    description: Line item of a health claim.
+    key: health_claim_id
+    properties:
+      health_claim_id: String
+      claim_type: String
+      sub_type: String
+      product_service: String
+      service_date: DateTime
+      quantity: Long
+      unit_price: Double
+      net_amount: Double
+      tax_amount: Double
+      patient_share_amount: Double
+      payer_share_amount: Double
+      currency: String
+    rollups: []
+    relationships_out:
+    - -[:DIAGNOSED_WITH]->(:DiagnosisCode)
+    relationships_in:
+    - <-[:HAS_SERVICE_LINE]-(:Claim)
+  DiagnosisCode:
+    description: Diagnosis code on a claim line.
+    key: code
+    properties:
+      code: String
+    rollups: []
+    relationships_out: []
+    relationships_in:
+    - <-[:DIAGNOSED_WITH]-(:HealthClaimLine)
+  Accident:
+    description: Motor accident behind a claim.
+    key: accident_id
+    properties:
+      accident_id: String
+      accident_case_number: String
+      accident_datetime: DateTime
+      city: String
+      latitude: Double
+      longitude: Double
+      source: String
+      parties_count: Long
+      injury_count: Long
+      fatality_count: Long
+    rollups: []
+    relationships_out:
+    - -[:ASSESSED_BY]->(:DamageAssessment)
+    relationships_in:
+    - <-[:INVOLVES_ACCIDENT]-(:Claim)
+  DamageAssessment:
+    description: Repair-cost estimate for an accident.
+    key: damage_assessment_id
+    properties:
+      damage_assessment_id: String
+      da_center: String
+      center_city: String
+      damage_type: String
+      da_initiated_date: DateTime
+      da_completed_date: DateTime
+      labor_cost: Double
+      spare_parts_cost: Double
+      total_cost_with_vat: Double
+    rollups: []
+    relationships_out: []
+    relationships_in:
+    - <-[:ASSESSED_BY]-(:Accident)
+  PolicyEvent:
+    description: Lifecycle event of a policy.
+    key: policy_event_id
+    properties:
+      policy_event_id: String
+      event_type: String
+      event_date: DateTime
+      event_status: String
+      reason: String
+      triggered_by: String
+    rollups: []
+    relationships_out: []
+    relationships_in:
+    - <-[:HAS_EVENT]-(:Policy)
+relationships:
+- type: ISSUED_BY
+  from: Policy
+  to: Insurer
+- type: SOLD_VIA
+  from: Policy
+  to: DistributionChannel
+- type: HAS_PRODUCT
+  from: Policy
+  to: Product
+  properties:
+    policy_product_id: Long
+- type: REINSURED_BY
+  from: Policy
+  to: Reinsurer
+  properties:
+    agreement_id: Long
+    agreement_type: String
+    coverage_type: String
+    quota_share_percentage: Double
+    excess_of_loss_limit: Double
+    effective_date: DateTime
+    expiry_date: DateTime
+  note: reinsurance agreement lives on the edge
+- type: HAS_EVENT
+  from: Policy
+  to: PolicyEvent
+- type: REGULATED_AS
+  from: Product
+  to: IAProduct
+- type: WORKS_FOR
+  from: Agent
+  to: DistributionChannel
+- type: COVERED_BY
+  from: HealthMember
+  to: Policy
+- type: SPONSORED_BY
+  from: HealthMember
+  to: Policyholder
+  note: employer / sponsoring organisation
+- type: IN_CLASS
+  from: HealthMember
+  to: BenefitClass
+- type: INSURED_UNDER
+  from: Vehicle
+  to: Policy
+- type: OWNED_BY
+  from: Vehicle
+  to: Policyholder
+- type: UNDER_POLICY
+  from: Claim
+  to: Policy
+  properties:
+    policy_product_id: Long
+  note: ~10% of claims have no policy edge
+- type: FOR_PRODUCT
+  from: Claim
+  to: Product
+- type: FILED_BY
+  from: Claim
+  to: Claimant
+- type: HAS_PRE_AUTH
+  from: Claim
+  to: PreAuthorization
+- type: HAS_SERVICE_LINE
+  from: Claim
+  to: HealthClaimLine
+- type: INVOLVES_ACCIDENT
+  from: Claim
+  to: Accident
+- type: DIAGNOSED_WITH
+  from: HealthClaimLine
+  to: DiagnosisCode
+- type: ASSESSED_BY
+  from: Accident
+  to: DamageAssessment
+value_sets:
+  Policy.policy_status: PROFILE
+  Policy.line_of_business: PROFILE
+  Policy.policy_type: PROFILE
+  Claim.claim_status: PROFILE
+  Claim.adjudication_outcome: PROFILE
+  Claim.claim_lob: PROFILE
+  PreAuthorization.pre_authorization_status: PROFILE
+  DistributionChannel.channel_type: PROFILE
+  Policyholder.policyholder_type: PROFILE
+  Vehicle.coverage_type: PROFILE
+  PolicyEvent.event_type: PROFILE
+  REINSURED_BY.agreement_type: PROFILE
+  Claimant.claimant_type: PROFILE
+common_paths:
+- name: Q23
+  question: Claims by insurer
+  cypher: 'MATCH (c:Claim)-[:UNDER_POLICY]->(:Policy)-[:ISSUED_BY]->(i:Insurer)
+
+    RETURN i.name AS insurer, count(c) AS claim_count ORDER BY claim_count DESC'
+- name: Q30
+  question: Policyholders with the most fraud-flagged motor claims
+  cypher: 'MATCH (c:Claim)-[:UNDER_POLICY]->(p:Policy)<-[:INSURED_UNDER]-(v:Vehicle)-[:OWNED_BY]->(ph:Policyholder)
+
+    WHERE c.fraud_suspicion_indicator = true AND p.line_of_business = ''${lob_motor}''
+
+    RETURN ph.name AS policyholder, count(DISTINCT c) AS fraud_flagged_motor_claims
+
+    ORDER BY fraud_flagged_motor_claims DESC, policyholder LIMIT 10'
+- name: Q34
+  question: Show me the journey of policy ${journey_policy_number}
+  cypher: "MATCH (p:Policy {policy_number: '${journey_policy_number}'})\nOPTIONAL MATCH (p)-[:HAS_EVENT]->(e:PolicyEvent)\n\
+    OPTIONAL MATCH (c:Claim)-[:UNDER_POLICY]->(p)\nRETURN p.policy_number AS policy_number, p.issue_date AS issued, p.policy_status\
+    \ AS status,\n       collect(DISTINCT {date: e.event_date, type: e.event_type}) AS events,\n       collect(DISTINCT {claim:\
+    \ c.claim_number, date: c.claim_creation_date, status: c.claim_status}) AS claims"
+- name: Q43
+  question: Policyholders with vehicles insured at more than one insurer
+  cypher: 'MATCH (ph:Policyholder)<-[:OWNED_BY]-(:Vehicle)-[:INSURED_UNDER]->(:Policy)-[:ISSUED_BY]->(i:Insurer)
+
+    WITH ph, count(DISTINCT i) AS insurer_count WHERE insurer_count > 1
+
+    RETURN ph.name AS policyholder, insurer_count ORDER BY insurer_count DESC, policyholder'
+- name: Q49
+  question: Organisations sponsoring the most health members
+  cypher: 'MATCH (m:HealthMember)-[:SPONSORED_BY]->(ph:Policyholder)
+
+    RETURN ph.name AS organisation, count(m) AS member_count ORDER BY member_count DESC, organisation LIMIT 10'
+- name: Q50
+  question: Top diagnosis codes by claim count
+  cypher: 'MATCH (c:Claim)-[:HAS_SERVICE_LINE]->(:HealthClaimLine)-[:DIAGNOSED_WITH]->(d:DiagnosisCode)
+
+    RETURN d.code AS diagnosis, count(DISTINCT c) AS claim_count ORDER BY claim_count DESC, diagnosis LIMIT 10'
+- name: Q52
+  question: Pre-authorization approval rate by status
+  cypher: "MATCH (pa:PreAuthorization)\nWITH pa.pre_authorization_status AS status, count(pa) AS total,\n     sum(CASE WHEN\
+    \ pa.adjudication_outcome = '${adj_approved}' THEN 1 ELSE 0 END) AS approved\nRETURN status, total, round(toFloat(approved)\
+    \ / total, 2) AS approval_rate ORDER BY total DESC"
+- name: Q55
+  question: Inactive products still attached to active policies
+  cypher: 'MATCH (p:Policy)-[:HAS_PRODUCT]->(pr:Product) WHERE p.is_active = true AND pr.is_active = false
+
+    RETURN pr.name AS product, count(DISTINCT p) AS active_policies ORDER BY active_policies DESC, product'

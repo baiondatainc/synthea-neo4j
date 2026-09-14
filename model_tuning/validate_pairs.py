@@ -53,16 +53,17 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # ── Schema constants (from data_catalog.yaml) ─────────────────────────────────
 VALID_LABELS = {
-    "Patient", "Visit", "Charge", "Transaction", "Statement", "PhoneBridge",
-    "RCCall", "IVRInbound", "DiallerCall", "Location", "InsurancePlan",
-    "Practice", "Campaign", "DiagnosisCode", "ProcedureCode", "BirdeyeReview",
+    "Policy", "IAProduct", "Product", "DistributionChannel", "HealthClaimLine",
+    "Vehicle", "BenefitClass", "Policyholder", "Claimant", "Agent",
+    "PreAuthorization", "DiagnosisCode", "HealthMember", "Accident",
+    "Reinsurer", "PolicyEvent", "DamageAssessment", "Claim", "Insurer",
 }
 VALID_RELS = {
-    "HAD_VISIT", "HAS_CHARGE", "HAS_TRANSACTION", "RECEIVED_STATEMENT",
-    "IDENTIFIED_BY_PHONE", "REGISTERED_AT", "CALLED_IVR", "CONTACTED_BY_DIALLER",
-    "BRIDGES_TO_PATIENT", "ATTRIBUTED_TO_PHONE", "PART_OF_CAMPAIGN", "PART_OF_VISIT",
-    "AT_LOCATION", "DIAGNOSED_WITH", "USES_PROCEDURE", "SETTLES", "PERFORMED_AT",
-    "UNDER_PLAN", "BELONGS_TO_PRACTICE", "ISSUED_BY_PRACTICE", "REVIEWS", "RUN_BY",
+    "SPONSORED_BY", "INVOLVES_ACCIDENT", "ISSUED_BY", "OWNED_BY",
+    "HAS_EVENT", "DIAGNOSED_WITH", "HAS_PRODUCT", "HAS_SERVICE_LINE",
+    "REGULATED_AS", "COVERED_BY", "ASSESSED_BY", "SOLD_VIA",
+    "IN_CLASS", "UNDER_POLICY", "HAS_PRE_AUTH", "FILED_BY",
+    "WORKS_FOR", "INSURED_UNDER", "REINSURED_BY", "FOR_PRODUCT",
 }
 WRITE_RE = re.compile(r"\b(CREATE|MERGE|SET|DELETE|REMOVE|DETACH)\b", re.I)
 

@@ -80,16 +80,19 @@ UNSAFE_KEYWORDS = [
 
 # Safe relationship types (allowlist for schema queries)
 SAFE_RELATIONSHIPS = [
-    "HAS_VISIT", "VISITED_BY", "AT_PROVIDER", "AT_ORGANIZATION",
-    "DIAGNOSED_WITH", "TREATED_WITH", "PRESCRIBED_BY", "UNDERWENT",
-    "HAD_OBSERVATION", "WORKS_AT", "PART_OF_VISIT", "PART_OF_CAMPAIGN",
-    # Add more as needed
+    "SPONSORED_BY", "INVOLVES_ACCIDENT", "ISSUED_BY", "OWNED_BY",
+    "HAS_EVENT", "DIAGNOSED_WITH", "HAS_PRODUCT", "HAS_SERVICE_LINE",
+    "REGULATED_AS", "COVERED_BY", "ASSESSED_BY", "SOLD_VIA",
+    "IN_CLASS", "UNDER_POLICY", "HAS_PRE_AUTH", "FILED_BY",
+    "WORKS_FOR", "INSURED_UNDER", "REINSURED_BY", "FOR_PRODUCT",
 ]
 
 # Safe node labels (allowlist)
 SAFE_NODES = [
-    "Patient", "Visit", "Provider", "Organization", "Condition", "Medication",
-    "Procedure", "Observation", "Campaign", "DiallerCall", "PhoneBridge",
+    "Policy", "IAProduct", "Product", "DistributionChannel", "HealthClaimLine",
+    "Vehicle", "BenefitClass", "Policyholder", "Claimant", "Agent",
+    "PreAuthorization", "DiagnosisCode", "HealthMember", "Accident",
+    "Reinsurer", "PolicyEvent", "DamageAssessment", "Claim", "Insurer",
 ]
 
 def invalidate_chain_cache():

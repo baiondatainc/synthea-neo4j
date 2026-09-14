@@ -36,14 +36,14 @@ logger = logging.getLogger(__name__)
 
 # Maps trigger keywords → node label
 _LABEL_KEYWORDS = {
-    "patient":   "Patient",
-    "location":  "Location",
-    "campaign":  "Campaign",
-    "practice":  "Practice",
-    "insurance": "InsurancePlan",
-    "plan":      "InsurancePlan",
-    "review":    "BirdeyeReview",
-    "charge":    "Charge",
+    "policy":       "Policy",
+    "claim":        "Claim",
+    "policyholder": "Policyholder",
+    "vehicle":      "Vehicle",
+    "product":      "Product",
+    "insurer":      "Insurer",
+    "member":       "HealthMember",
+    "agent":        "Agent",
 }
 
 # Trigger verbs/phrases that indicate a summary request
@@ -94,19 +94,63 @@ def detect_summary_request(question: str) -> dict | None:
 
 def _get_id_field(label: str) -> str:
     return {
-        "Patient":      "patientId",
-        "Location":     "name",
-        "Campaign":     "name",
-        "Practice":     "code",
-        "InsurancePlan": "plan_name",
-        "BirdeyeReview": "birdeyeId",
-        "Charge":       "chargeId",
+        "Policy":       "policy_id",
+        "Policyholder": "policyholder_sk",
+        "Claim":        "claim_id",
+        "Vehicle":      "vehicle_id",
+        "Product":      "product_mapping_id",
+        "Insurer":      "insurer_id",
+        "HealthMember": "member_id",
+        "Agent":        "agent_id",
     }.get(label, "name")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Node fetchers — one per label
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _fetch_policy(policy_id: str) -> dict:
+    """Fetch a Policy node and the most relevant aggregate context."""
+    rows = Neo4jConnection.run_query(
+        """
+        MATCH (p:Policy)
+        WHERE p.policy_id = $id OR p.policy_number = $id OR toLower(toString(p.policy_id)) = toLower($id)
+        RETURN p LIMIT 1
+        """,
+        {"id": policy_id},
+    )
+    if not rows:
+        return {}
+    return {"node": dict(rows[0]["p"])}
+
+
+def _fetch_claim(claim_id: str) -> dict:
+    rows = Neo4jConnection.run_query(
+        """
+        MATCH (c:Claim)
+        WHERE c.claim_id = $id OR c.claim_number = $id
+        RETURN c LIMIT 1
+        """,
+        {"id": claim_id},
+    )
+    if not rows:
+        return {}
+    return {"node": dict(rows[0]["c"])}
+
+
+def _fetch_policyholder(policyholder_id: str) -> dict:
+    rows = Neo4jConnection.run_query(
+        """
+        MATCH (ph:Policyholder)
+        WHERE ph.policyholder_sk = $id OR ph.name = $id OR ph.cr_id = $id
+        RETURN ph LIMIT 1
+        """,
+        {"id": policyholder_id},
+    )
+    if not rows:
+        return {}
+    return {"node": dict(rows[0]["ph"])}
+
 
 def _fetch_patient(patient_id: str) -> dict:
     """Fetch Patient node + key relationships."""
@@ -346,6 +390,9 @@ def _fetch_practice(practice_code: str) -> dict:
 # ── Dispatcher ────────────────────────────────────────────────────────────────
 
 _FETCHERS = {
+    "Policy":       _fetch_policy,
+    "Claim":        _fetch_claim,
+    "Policyholder": _fetch_policyholder,
     "Patient":      _fetch_patient,
     "Location":     _fetch_location,
     "Campaign":     _fetch_campaign,
@@ -481,10 +528,13 @@ Summary:"""
 
 
 _PROMPTS = {
-    "Patient":   _PATIENT_PROMPT,
-    "Location":  _LOCATION_PROMPT,
-    "Campaign":  _CAMPAIGN_PROMPT,
-    "Practice":  _PRACTICE_PROMPT,
+    "Policy":       "You are an insurance data analyst. Summarize this policy and its claim footprint.\n\nData:\n{context}\n\nProvide a factual summary with policy status, product, coverage, and claim totals.\n\nSummary:",
+    "Claim":        "You are an insurance data analyst. Summarize this claim with statuses, payment, and assessment details.\n\nData:\n{context}\n\nProvide a factual summary with key claim facts and outcomes.\n\nSummary:",
+    "Policyholder": "You are an insurance data analyst. Summarize this policyholder profile and policy history.\n\nData:\n{context}\n\nProvide a concise, factual summary.\n\nSummary:",
+    "Patient":      _PATIENT_PROMPT,
+    "Location":     _LOCATION_PROMPT,
+    "Campaign":     _CAMPAIGN_PROMPT,
+    "Practice":     _PRACTICE_PROMPT,
 }
 
 _DEFAULT_PROMPT = """You are a healthcare data analyst. Summarize this node's data.

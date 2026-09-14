@@ -52,18 +52,18 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 # ─────────────────────────────────────────────────────────────────────────────
 
 NODE_LABELS = {
-    "Patient", "Practice", "Location", "InsurancePlan", "Visit", "Charge",
-    "Transaction", "Statement", "RCCall", "IVRInbound", "DiallerCall",
-    "PhoneBridge", "Campaign", "BirdeyeReview", "DiagnosisCode", "ProcedureCode",
+    "Policy", "IAProduct", "Product", "DistributionChannel", "HealthClaimLine",
+    "Vehicle", "BenefitClass", "Policyholder", "Claimant", "Agent",
+    "PreAuthorization", "DiagnosisCode", "HealthMember", "Accident",
+    "Reinsurer", "PolicyEvent", "DamageAssessment", "Claim", "Insurer",
 }
 
 RELATIONSHIPS = {
-    "REGISTERED_AT", "HAD_VISIT", "HAS_CHARGE", "HAS_TRANSACTION",
-    "RECEIVED_STATEMENT", "CALLED_IVR", "CONTACTED_BY_DIALLER",
-    "IDENTIFIED_BY_PHONE", "BELONGS_TO_PRACTICE", "ISSUED_BY_PRACTICE",
-    "PERFORMED_AT", "UNDER_PLAN", "PART_OF_VISIT", "AT_LOCATION",
-    "DIAGNOSED_WITH", "USES_PROCEDURE", "SETTLES", "PART_OF_CAMPAIGN",
-    "ATTRIBUTED_TO_PHONE", "REVIEWS", "RUN_BY",
+    "SPONSORED_BY", "INVOLVES_ACCIDENT", "ISSUED_BY", "OWNED_BY",
+    "HAS_EVENT", "DIAGNOSED_WITH", "HAS_PRODUCT", "HAS_SERVICE_LINE",
+    "REGULATED_AS", "COVERED_BY", "ASSESSED_BY", "SOLD_VIA",
+    "IN_CLASS", "UNDER_POLICY", "HAS_PRE_AUTH", "FILED_BY",
+    "WORKS_FOR", "INSURED_UNDER", "REINSURED_BY", "FOR_PRODUCT",
 }
 
 

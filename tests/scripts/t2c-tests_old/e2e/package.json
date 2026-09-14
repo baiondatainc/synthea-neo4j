@@ -1,0 +1,14 @@
+{
+  "name": "ia-t2c-e2e",
+  "private": true,
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.47.0",
+    "js-yaml": "^4.1.0",
+    "@types/js-yaml": "^4.0.9"
+  }
+}

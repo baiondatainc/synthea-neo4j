@@ -113,17 +113,17 @@ async def health():
 async def graph_stats():
     """Node and relationship counts for the RP knowledge graph."""
     queries = {
-        "patients":      "MATCH (n:Patient) RETURN count(n) AS count",
-        "practices":     "MATCH (n:Practice) RETURN count(n) AS count",
-        "locations":     "MATCH (n:Location) RETURN count(n) AS count",
-        "visits":        "MATCH (n:Visit) RETURN count(n) AS count",
-        "charges":       "MATCH (n:Charge) RETURN count(n) AS count",
-        "transactions":  "MATCH (n:Transaction) RETURN count(n) AS count",
-        "statements":    "MATCH (n:Statement) RETURN count(n) AS count",
-        "insurance":     "MATCH (n:InsurancePlan) RETURN count(n) AS count",
-        "rc_calls":      "MATCH (n:RCCall) RETURN count(n) AS count",
-        "ivr_calls":     "MATCH (n:IVRInbound) RETURN count(n) AS count",
-        "relationships": "MATCH ()-[r]->() RETURN count(r) AS count",
+        "policies":             "MATCH (n:Policy) RETURN count(n) AS count",
+        "policyholders":        "MATCH (n:Policyholder) RETURN count(n) AS count",
+        "claims":               "MATCH (n:Claim) RETURN count(n) AS count",
+        "health_members":       "MATCH (n:HealthMember) RETURN count(n) AS count",
+        "vehicles":             "MATCH (n:Vehicle) RETURN count(n) AS count",
+        "products":             "MATCH (n:Product) RETURN count(n) AS count",
+        "insurers":             "MATCH (n:Insurer) RETURN count(n) AS count",
+        "health_claim_lines":   "MATCH (n:HealthClaimLine) RETURN count(n) AS count",
+        "pre_authorizations":   "MATCH (n:PreAuthorization) RETURN count(n) AS count",
+        "policy_events":        "MATCH (n:PolicyEvent) RETURN count(n) AS count",
+        "relationships":        "MATCH ()-[r]->() RETURN count(r) AS count",
     }
     stats = {}
     for key, q in queries.items():
@@ -136,18 +136,18 @@ async def graph_stats():
 async def sample_questions():
     return {
         "questions": [
-            "Which patients have the highest outstanding balance?",
-            "What is the total bad debt by state?",
-            "Show me catastrophe patients in Tennessee",
-            "Which practices have the most self-pay patients?",
-            "What are the most common procedures by modality?",
-            "How much was collected through IVR pay-by-phone?",
-            "Which insurance carriers cover the most visits?",
-            "What is the average charge amount by procedure modality?",
-            "Show me patients with bad debt over $5000",
-            "Which locations have the lowest Birdeye ratings?",
-            "How many multi-practice patients are there?",
-            "What is the contractual adjustment total by practice?",
+            "Which policies have the highest total outstanding amount?",
+            "What is the total claimed amount by insurer?",
+            "Show me policies for high-risk vehicles in the Gulf region",
+            "Which distribution channels sold the most policies?",
+            "What are the top claim categories by claim count?",
+            "How much was approved for pre-authorizations this quarter?",
+            "Which insurers issue the most policies?",
+            "What is the average claim amount by product line?",
+            "Show me open claims with the highest outstanding balance",
+            "Which policyholders have the highest claim pressure?",
+            "How many policies are reinsured by each reinsurer?",
+            "What is the total covered amount by benefit class?",
         ]
     }
 
