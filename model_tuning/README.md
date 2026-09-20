@@ -1,5 +1,5 @@
 # Text2Cypher LoRA Training Pipeline
-## Gemma 2 9B Fine-tuning for RP Knowledge Graph
+## Gemma 2 9B Fine-tuning for IA Knowledge Graph
 
 This directory contains scripts to train, validate, and evaluate a fine-tuned Gemma model for generating Cypher queries from natural language questions.
 
@@ -388,7 +388,7 @@ outputs = model.generate(**inputs, max_new_tokens=512, temperature=0)
 
 - **CLAUDE.md** — Complete architecture & rules (read first)
 - **text2cypher_train_and_implement_plan.md** — Full strategy & risk analysis
-- **catalog.yaml** — RP Knowledge Graph schema (source of truth)
+- **catalog.yaml** — IA Knowledge Graph schema (source of truth)
 - **settings.py** — Guardrail thresholds and model config
 
 ---

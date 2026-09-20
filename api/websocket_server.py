@@ -1,5 +1,5 @@
 """
-FastAPI server for streaming QA over the RP Knowledge Graph.
+FastAPI server for streaming QA over the IA Knowledge Graph.
 SGS — HealthGraph AI for RP.
 
 WebSocket protocol (JSON messages):
@@ -77,7 +77,7 @@ async def lifespan(app: FastAPI):
 # ── App ───────────────────────────────────────────────────────────────────────
 
 app = FastAPI(
-    title="HealthGraph AI — RP Knowledge Graph QA",
+    title="HealthGraph AI — IA Knowledge Graph QA",
     description="Streaming QA over the RP knowledge graph",
     version="1.0.0",
     lifespan=lifespan,
@@ -85,6 +85,9 @@ app = FastAPI(
 
 app.include_router(openai_router)
 app.include_router(schema_router)
+# Also expose under /api/* so browsers hitting the backend directly
+# (bypassing the Vite/nginx proxy) resolve the same routes.
+app.include_router(schema_router, prefix="/api")
 
 app.add_middleware(
     CORSMiddleware,

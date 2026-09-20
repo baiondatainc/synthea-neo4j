@@ -1,5 +1,5 @@
 # CLAUDE.md — Text2Cypher LoRA Build
-## RP Knowledge Graph · SGS
+## IA Knowledge Graph · SGS
 
 > **Read this file first before touching any code.**
 > This is the single source of truth for Claude Code on this project.

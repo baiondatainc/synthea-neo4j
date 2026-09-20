@@ -1,5 +1,5 @@
 # 🚀 LoRA Training Quick Start Guide
-## Text2Cypher + Gemma 2 9B for RP Knowledge Graph
+## Text2Cypher + Gemma 2 9B for IA Knowledge Graph
 
 This guide walks you through training the model with existing code and data.
 

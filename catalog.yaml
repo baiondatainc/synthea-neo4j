@@ -1,4 +1,4 @@
-# RP Knowledge Graph Schema — Source of Truth for All Prompts
+# IA Knowledge Graph Schema — Source of Truth for All Prompts
 # This schema is the authoritative reference for Cypher query generation.
 # Keep in sync with Neo4j database constraints and indexes.
 

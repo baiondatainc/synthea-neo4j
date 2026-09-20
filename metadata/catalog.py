@@ -267,7 +267,7 @@ class Catalog:
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>RP Knowledge Graph — Data Dictionary</title>
+<title>IA Knowledge Graph — Data Dictionary</title>
 <style>
   :root {
     --ink: #1a1a2e; --ink-soft: #444466; --muted: #888;
@@ -339,7 +339,7 @@ class Catalog:
   <a href="#budget">Token Budget</a>
 </nav>
 <div class="wrap">
-<h1>RP Knowledge Graph — Data Dictionary</h1>
+<h1>IA Knowledge Graph — Data Dictionary</h1>
 <p class="subtitle">Auto-generated from data_dictionary.yaml &nbsp;·&nbsp;
 Edit the YAML file and re-run <code>catalog.to_html()</code> to refresh.</p>
 """)

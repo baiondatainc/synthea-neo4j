@@ -151,158 +151,181 @@ def get_schema() -> dict:
     }
 
 
-# ── Patient journey ──────────────────────────────────────────────────────
+# ── Policy journey ───────────────────────────────────────────────────────
 
-_PATIENT_SAMPLE_CYPHER = """
-MATCH (p:Patient)
-WHERE p.source_db IS NOT NULL AND p.patient_id IS NOT NULL
-RETURN (p.source_db + ':' + toString(p.patient_id)) AS id,
-       p.state                   AS state,
-       p.payor_cohort            AS payor_cohort,
-       p.call_tier               AS call_tier,
-       coalesce(p.outstanding_balance, 0.0) AS balance,
-       coalesce(p.adj_bad_debt, 0.0)        AS bad_debt,
-       coalesce(p.visit_count, 0)           AS visit_count,
-       coalesce(p.charge_count, 0)          AS charge_count
-ORDER BY balance DESC
+_POLICY_SAMPLE_CYPHER = """
+MATCH (p:Policy)
+WHERE p.policy_id IS NOT NULL
+RETURN toString(p.policy_id)                          AS id,
+       coalesce(p.policy_number, '')                  AS policy_number,
+       coalesce(p.line_of_business, '')               AS line_of_business,
+       coalesce(p.policy_status, '')                  AS policy_status,
+       coalesce(p.is_active, false)                   AS is_active,
+       coalesce(p.gross_written_premium, 0.0)         AS gwp,
+       coalesce(p.total_paid, 0.0)                    AS total_paid,
+       coalesce(p.total_outstanding, 0.0)             AS outstanding,
+       coalesce(p.claim_count, 0)                     AS claim_count,
+       coalesce(p.calculated_loss_ratio_pct, 0.0)     AS loss_ratio_pct
+ORDER BY gwp DESC
 LIMIT $limit
 """
 
 
-@router.get("/patients/sample")
-def patient_sample(limit: int = 50) -> dict:
-    """Top N patients by outstanding balance — useful seeds for the journey picker."""
-    rows = Neo4jConnection.run_query(_PATIENT_SAMPLE_CYPHER, {"limit": int(limit)})
-    return {"patients": rows or []}
+@router.get("/policies/sample")
+def policy_sample(limit: int = 50) -> dict:
+    """Top N policies by gross written premium — seed list for the journey picker."""
+    rows = Neo4jConnection.run_query(_POLICY_SAMPLE_CYPHER, {"limit": int(limit)})
+    return {"policies": rows or []}
 
 
-_JOURNEY_HEADER = """
-MATCH (p:Patient {source_db: $src, patient_id: $pid})
-OPTIONAL MATCH (p)-[:REGISTERED_AT]->(pr:Practice)
-RETURN ($src + ':' + toString($pid))         AS patient_id,
-       p.state                               AS state,
-       p.city                                AS city,
-       p.payor_cohort                        AS payor_cohort,
-       p.call_tier                           AS call_tier,
-       p.carrier_name                        AS carrier_name,
-       coalesce(p.outstanding_balance, 0.0)  AS outstanding_balance,
-       coalesce(p.total_charged, 0.0)        AS total_charged,
-       coalesce(p.total_paid, 0.0)           AS total_paid,
-       coalesce(p.adj_bad_debt, 0.0)         AS adj_bad_debt,
-       coalesce(p.visit_count, 0)            AS visit_count,
-       coalesce(p.charge_count, 0)           AS charge_count,
-       coalesce(p.statement_count, 0)        AS statement_count,
-       collect(DISTINCT pr.code)             AS practices
+_POLICY_HEADER = """
+MATCH (p:Policy {policy_id: $pid})
+OPTIONAL MATCH (p)-[:ISSUED_BY]->(i:Insurer)
+OPTIONAL MATCH (p)-[:SOLD_VIA]->(d:DistributionChannel)
+OPTIONAL MATCH (p)-[:HAS_PRODUCT]->(prd:Product)
+OPTIONAL MATCH (p)-[:REINSURED_BY]->(r:Reinsurer)
+RETURN toString(p.policy_id)                          AS policy_id,
+       coalesce(p.policy_number, '')                  AS policy_number,
+       coalesce(p.policy_type, '')                    AS policy_type,
+       coalesce(p.line_of_business, '')               AS line_of_business,
+       coalesce(p.policy_status, '')                  AS policy_status,
+       coalesce(p.is_active, false)                   AS is_active,
+       coalesce(p.is_cancelled, false)                AS is_cancelled,
+       coalesce(p.is_reinsured, false)                AS is_reinsured,
+       toString(p.issue_date)                         AS issue_date,
+       toString(p.effect_date)                        AS effect_date,
+       toString(p.expiry_date)                        AS expiry_date,
+       toString(p.renewal_date)                       AS renewal_date,
+       toString(p.cancellation_date)                  AS cancellation_date,
+       coalesce(p.cancellation_reason, '')            AS cancellation_reason,
+       coalesce(p.gross_written_premium, 0.0)         AS gross_written_premium,
+       coalesce(p.net_written_premium, 0.0)           AS net_written_premium,
+       coalesce(p.commission, 0.0)                    AS commission,
+       coalesce(p.total_claimed, 0.0)                 AS total_claimed,
+       coalesce(p.total_approved, 0.0)                AS total_approved,
+       coalesce(p.total_paid, 0.0)                    AS total_paid,
+       coalesce(p.total_outstanding, 0.0)             AS total_outstanding,
+       coalesce(p.calculated_loss_ratio_pct, 0.0)     AS loss_ratio_pct,
+       coalesce(p.claim_count, 0)                     AS claim_count,
+       coalesce(p.open_claim_count, 0)                AS open_claim_count,
+       coalesce(p.renewal_count, 0)                   AS renewal_count,
+       coalesce(p.event_count, 0)                     AS event_count,
+       collect(DISTINCT i.name)[0..1]                 AS insurer,
+       collect(DISTINCT d.name)[0..3]                 AS channels,
+       collect(DISTINCT prd.name)[0..3]               AS products,
+       collect(DISTINCT r.name)[0..3]                 AS reinsurers
 """
 
-_JOURNEY_EVENTS = """
-MATCH (p:Patient {source_db: $src, patient_id: $pid})
+# All events flow to a single UNION'd stream keyed by (kind, ts, id, label, detail, amount).
+# Ordering + a hard LIMIT are applied after the union.
+_POLICY_EVENTS = """
+MATCH (p:Policy {policy_id: $pid})
 
-OPTIONAL MATCH (p)-[:HAD_VISIT]->(v:Visit)
-WITH p, collect({
-  kind: 'visit',
-  ts:   v.admit_date,
-  id:   v.visit_id,
-  label: 'Visit',
-  detail: coalesce(v.visit_id, ''),
+// Issue / effect (single anchor event)
+WITH p, [
+  {kind: 'issue',
+   ts:    toString(coalesce(p.effect_date, p.issue_date)),
+   id:    'policy-' + toString(p.policy_id),
+   label: 'Policy issued',
+   detail: coalesce(p.policy_number, ''),
+   amount: coalesce(p.gross_written_premium, 0.0)}
+] AS issue_events
+
+// Lifecycle events (endorsements, renewals, cancellations tracked as PolicyEvent)
+OPTIONAL MATCH (p)-[:HAS_EVENT]->(pe:PolicyEvent)
+WITH p, issue_events, collect({
+  kind: 'event',
+  ts:    toString(pe.event_date),
+  id:    toString(pe.policy_event_id),
+  label: coalesce(pe.event_type, 'Policy event'),
+  detail: coalesce(pe.reason, coalesce(pe.event_status, '')),
   amount: null
-}) AS visits
+}) AS lifecycle_events
 
-OPTIONAL MATCH (p)-[:HAS_CHARGE]->(c:Charge)
-WITH p, visits, collect({
-  kind: 'charge',
-  ts:   c.service_date,
-  id:   c.charge_id,
-  label: coalesce(c.procedure_modality, 'Charge'),
-  detail: coalesce(c.procedure_description, c.procedure_code, ''),
-  amount: c.charge_amount
-}) AS charges
+// Claims
+OPTIONAL MATCH (c:Claim)-[:UNDER_POLICY]->(p)
+WITH p, issue_events, lifecycle_events, collect({
+  kind: 'claim',
+  ts:    toString(c.claim_creation_date),
+  id:    toString(c.claim_id),
+  label: coalesce(c.claim_status, 'Claim'),
+  detail: coalesce(c.claim_lob, coalesce(c.adjudication_outcome, '')),
+  amount: coalesce(c.claimed_amount, 0.0)
+}) AS claim_events
 
-OPTIONAL MATCH (p)-[:HAS_TRANSACTION]->(t:Transaction)
-WITH p, visits, charges, collect({
-  kind: 'transaction',
-  ts:   t.post_date,
-  id:   t.payment_id,
-  label: coalesce(t.adjustment_bucket, t.transaction_type, 'Transaction'),
-  detail: coalesce(t.payment_method, t.paysource, ''),
-  amount: coalesce(t.payment_amount, t.adjustment_amount, 0.0)
-}) AS transactions
+// Pre-authorizations (traverse through claims)
+OPTIONAL MATCH (c2:Claim)-[:UNDER_POLICY]->(p), (c2)-[:HAS_PRE_AUTH]->(pa:PreAuthorization)
+WITH p, issue_events, lifecycle_events, claim_events, collect({
+  kind: 'pre_auth',
+  ts:    toString(pa.pre_authorization_creation_date),
+  id:    toString(pa.pre_authorization_id),
+  label: coalesce(pa.pre_authorization_status, 'Pre-auth'),
+  detail: coalesce(pa.adjudication_outcome, ''),
+  amount: coalesce(pa.pre_authorization_amount, 0.0)
+}) AS preauth_events
 
-OPTIONAL MATCH (p)-[:RECEIVED_STATEMENT]->(s:Statement)
-WITH p, visits, charges, transactions, collect({
-  kind: 'statement',
-  ts:   s.created_date,
-  id:   s.statement_id,
-  label: 'Statement',
-  detail: coalesce(s.statement_level, ''),
-  amount: s.patient_balance
-}) AS statements
+// Payments (claim resolutions with an amount paid)
+OPTIONAL MATCH (c3:Claim)-[:UNDER_POLICY]->(p)
+WHERE c3.amount_paid IS NOT NULL AND c3.amount_paid > 0
+  AND coalesce(c3.last_payment_date, c3.claim_resolution_date) IS NOT NULL
+WITH p, issue_events, lifecycle_events, claim_events, preauth_events, collect({
+  kind: 'payment',
+  ts:    toString(coalesce(c3.last_payment_date, c3.claim_resolution_date)),
+  id:    'pay-' + toString(c3.claim_id),
+  label: 'Claim paid',
+  detail: coalesce(c3.claim_number, toString(c3.claim_id)),
+  amount: coalesce(c3.amount_paid, 0.0)
+}) AS payment_events
 
-OPTIONAL MATCH (p)-[:CALLED_IVR]->(ivr:IVRInbound)
-WITH p, visits, charges, transactions, statements, collect({
-  kind: 'ivr',
-  ts:   ivr.call_datetime,
-  id:   ivr.response_id,
-  label: 'IVR call',
-  detail: coalesce(ivr.result_desc, ''),
-  amount: ivr.amount_paid
-}) AS ivrs
+// Cancellation / expiry (only if set)
+WITH issue_events + lifecycle_events + claim_events + preauth_events + payment_events + [
+  CASE WHEN p.cancellation_date IS NOT NULL THEN
+    {kind: 'cancellation',
+     ts:    toString(p.cancellation_date),
+     id:    'cancel-' + toString(p.policy_id),
+     label: 'Cancelled',
+     detail: coalesce(p.cancellation_reason, ''),
+     amount: null}
+  END,
+  CASE WHEN p.expiry_date IS NOT NULL THEN
+    {kind: 'expiry',
+     ts:    toString(p.expiry_date),
+     id:    'expiry-' + toString(p.policy_id),
+     label: 'Policy expires',
+     detail: '',
+     amount: null}
+  END
+] AS all_events
 
-OPTIONAL MATCH (p)-[:CONTACTED_BY_DIALLER]->(d:DiallerCall)
-WITH p, visits, charges, transactions, statements, ivrs, collect({
-  kind: 'dialler',
-  ts:   d.call_datetime,
-  id:   d.account,
-  label: 'Dialler call',
-  detail: coalesce(d.result_desc, ''),
-  amount: null
-}) AS diallers
-
-WITH visits + charges + transactions + statements + ivrs + diallers AS all_events
 UNWIND all_events AS e
-WITH e WHERE e.ts IS NOT NULL AND e.id IS NOT NULL
+WITH e WHERE e IS NOT NULL AND e.ts IS NOT NULL AND e.id IS NOT NULL
   AND NOT toString(e.ts) STARTS WITH '1970'
-RETURN e.kind AS kind, toString(e.ts) AS ts, toString(e.id) AS id,
+RETURN e.kind AS kind, e.ts AS ts, e.id AS id,
        e.label AS label, e.detail AS detail, e.amount AS amount
 ORDER BY ts ASC
 LIMIT 500
 """
 
 
-def _split_composite(patient_id: str) -> tuple[str, str]:
-    """Composite ID format is '{source_db}:{patient_id}', e.g. 'SAPA:1000102'."""
-    if ":" not in patient_id:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid patient id {patient_id!r}; expected format 'source_db:patient_id' (e.g. 'SAPA:1000102')",
-        )
-    src, pid = patient_id.split(":", 1)
-    return src.strip(), pid.strip()
+@router.get("/policy-journey/{policy_id}")
+def policy_journey(policy_id: str) -> dict:
+    params = {"pid": policy_id.strip()}
 
-
-@router.get("/patient-journey/{patient_id}")
-def patient_journey(patient_id: str) -> dict:
-    src, pid = _split_composite(patient_id)
-    params = {"src": src, "pid": pid}
-
-    head = Neo4jConnection.run_query(_JOURNEY_HEADER, params)
+    head = Neo4jConnection.run_query(_POLICY_HEADER, params)
     if not head:
-        raise HTTPException(status_code=404, detail=f"Patient not found: {patient_id}")
-    patient = head[0]
+        raise HTTPException(status_code=404, detail=f"Policy not found: {policy_id}")
+    policy = head[0]
 
-    events = Neo4jConnection.run_query(_JOURNEY_EVENTS, params) or []
+    events = Neo4jConnection.run_query(_POLICY_EVENTS, params) or []
 
-    # PII redaction for the patient header (last name etc. aren't selected
-    # here, but any future addition stays safe).
-    patient = redact_rows([patient])[0]
+    policy = redact_rows([policy])[0]
 
-    # Bucket counts for a quick "summary strip" in the UI.
     counts: dict[str, int] = {}
     for e in events:
         counts[e["kind"]] = counts.get(e["kind"], 0) + 1
 
     return {
-        "patient": patient,
+        "policy": policy,
         "events": events,
         "counts": counts,
     }

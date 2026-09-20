@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>IA Knowledge Graph — Data Dictionary</title>
+<style>
+  :root {
+    --ink: #1a1a2e; --ink-soft: #444466; --muted: #888;
+    --bg: #f8f8fc; --surface: #fff; --line: #e0e0ee;
+    --indigo: #4338ca; --teal: #0e8c6a; --amber: #a6650c;
+    --red: #c0392b; --slate: #5b6472;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: var(--bg);
+         color: var(--ink); line-height: 1.6; font-size: 14px; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 24px 28px; }
+  h1 { font-size: 26px; font-weight: 700; color: var(--indigo); margin-bottom: 4px; }
+  .subtitle { color: var(--muted); font-size: 13px; margin-bottom: 32px; }
+  h2 { font-size: 18px; font-weight: 600; margin: 36px 0 14px;
+       padding-bottom: 6px; border-bottom: 2px solid var(--indigo);
+       color: var(--indigo); }
+  h3 { font-size: 15px; font-weight: 600; margin: 18px 0 6px; color: var(--ink); }
+  .node-card { background: var(--surface); border: 1px solid var(--line);
+               border-radius: 10px; padding: 16px 20px; margin-bottom: 14px; }
+  .node-title { font-size: 16px; font-weight: 700; color: var(--indigo);
+                margin-bottom: 4px; }
+  .node-desc { color: var(--ink-soft); font-size: 13px; margin-bottom: 10px; }
+  .prop-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .prop-table th { text-align: left; padding: 5px 10px; background: #f0f0f8;
+                   color: var(--slate); font-weight: 600; border-bottom: 1px solid var(--line); }
+  .prop-table td { padding: 5px 10px; border-bottom: 1px solid #f0f0f0;
+                   vertical-align: top; }
+  .prop-table tr:last-child td { border-bottom: none; }
+  .val-list { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 3px; }
+  .val-chip { background: #eef; border: 1px solid #ccd; border-radius: 4px;
+              padding: 1px 7px; font-size: 11px; color: var(--ink-soft); }
+  .rel-card { background: var(--surface); border: 1px solid var(--line);
+              border-radius: 8px; padding: 12px 16px; margin-bottom: 8px;
+              display: grid; grid-template-columns: 200px 1fr; gap: 12px; }
+  .rel-name { font-weight: 700; color: var(--teal); font-size: 13px; }
+  .rel-arrow { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .rel-desc { font-size: 13px; color: var(--ink-soft); }
+  .rel-example { margin-top: 6px; }
+  .path-block { background: #f4f8f4; border-left: 3px solid var(--teal);
+                border-radius: 4px; padding: 10px 14px; margin-bottom: 8px; font-size: 13px; }
+  .path-name { font-weight: 600; color: var(--teal); margin-bottom: 4px; }
+  .kw-section { background: var(--surface); border: 1px solid var(--line);
+                border-radius: 8px; padding: 12px 16px; margin-bottom: 8px; }
+  .kw-label { font-weight: 700; color: var(--indigo); margin-bottom: 6px; font-size: 13px; }
+  .kw-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+  .kw-chip { background: #ede8ff; border: 1px solid #c5b8f5; border-radius: 4px;
+             padding: 2px 8px; font-size: 11px; color: var(--indigo); }
+  .budget-table { border-collapse: collapse; width: auto; font-size: 13px; }
+  .budget-table td, .budget-table th { padding: 6px 14px; border: 1px solid var(--line); }
+  .budget-table th { background: #f0f0f8; }
+  .topic-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+  .topic-chip { background: #fff8e8; border: 1px solid #e8d8a0; border-radius: 4px;
+                padding: 2px 8px; font-size: 11px; color: var(--amber); }
+  .pii-badge { background: #fde8e8; color: var(--red); border: 1px solid #f5b8b8;
+               border-radius: 4px; padding: 1px 6px; font-size: 10px; font-weight: 700; }
+  nav { position: sticky; top: 0; background: var(--indigo); color: #fff;
+        padding: 10px 28px; display: flex; gap: 20px; font-size: 13px; z-index: 100; }
+  nav a { color: rgba(255,255,255,0.85); text-decoration: none; font-weight: 500; }
+  nav a:hover { color: #fff; }
+</style>
+</head>
+<body>
+<nav>
+  <a href="#nodes">Nodes</a>
+  <a href="#relationships">Relationships</a>
+  <a href="#paths">Common Paths</a>
+  <a href="#keywords">Label Keywords</a>
+  <a href="#topics">Allowed Topics</a>
+  <a href="#budget">Token Budget</a>
+</nav>
+<div class="wrap">
+<h1>IA Knowledge Graph — Data Dictionary</h1>
+<p class="subtitle">Auto-generated from data_dictionary.yaml &nbsp;·&nbsp;
+Edit the YAML file and re-run <code>catalog.to_html()</code> to refresh.</p>
+
+<h2 id="budget">Token Budget</h2>
+<table class="budget-table"><tr><th>Setting</th><th>Value</th><th>Purpose</th></tr>
+<tr><td><b>schema_char_budget</b></td><td>6000</td><td>Max chars for schema block (~tokens×4)</td></tr>
+<tr><td><b>min_rel_budget</b></td><td>200</td><td>Min remaining chars before adding relationships</td></tr>
+<tr><td><b>min_path_budget</b></td><td>150</td><td>Min remaining chars before adding common paths</td></tr>
+<tr><td><b>max_values_shown</b></td><td>4</td><td>Max value examples shown per property</td></tr>
+<tr><td><b>max_prop_desc_chars</b></td><td>70</td><td>Max chars for property description</td></tr>
+</table>
+<h2 id="nodes">Node Labels</h2>
+<div class="node-card">
+<div class="node-title">:Policy</div>
+<div class="node-desc">Insurance policy - the anchor node. Carries premium, loss-ratio and claim ROLLUPS. Rollups: claim_count, open_claim_count, fraud_flagged_claim_count, total_claimed, total_approved, total_paid, total_outstanding, avg_settlement_days, renewal_count, event_count, vehicle_count, health_member_count, calculated_loss_ratio_pct.</div>
+<table class="prop-table">
+<tr><th>Property</th><th>Description</th><th>Values</th></tr>
+<tr><td><b>policy_id</b></td><td>policy id (string)</td><td></td></tr>
+<tr><td><b>policy_number</b></td><td>policy number (string)</td><td></td></tr>
+<tr><td><b>policy_type</b></td><td>policy type (string)</td><td></td></tr>
+<tr><td><b>main_type</b></td><td>main type (string)</td><td></td></tr>
+<tr><td><b>general_line_of_business</b></td><td>general line of business (string)</td><td></td></tr>
+<tr><td><b>line_of_business</b></td><td>health | motor | pc | ps (profile actual values).</td><td></td></tr>
+<tr><td><b>policy_status</b></td><td>policy status (string)</td><td></td></tr>
+<tr><td><b>is_active</b></td><td>True if the policy is currently in force. Use for 'active policies'.</td><td></td></tr>
+<tr><td><b>is_cancelled</b></td><td>True if cancelled. Pair with cancellation_reason.</td><td></td></tr>
+<tr><td><b>is_reinsured</b></td><td>is reinsured (boolean)</td><td></td></tr>
+<tr><td><b>is_direct</b></td><td>is direct (boolean)</td><td></td></tr>
+<tr><td><b>issue_date</b></td><td>issue date (datetime)</td><td></td></tr>
+<tr><td><b>effect_date</b></td><td>effect date (datetime)</td><td></td></tr>
+<tr><td><b>renewal_date</b></td><td>renewal date (datetime)</td><td></td></tr>
+<tr><td><b>expiry_date</b></td><td>expiry date (datetime)</td><td></td></tr>
+<tr><td><b>cancellation_date</b></td><td>cancellation date (datetime)</td><td></td></tr>
+<tr><td><b>cancellation_reason</b></td><td>cancellation reason (string)</td><td></td></tr>
+<tr><td><b>policy_term_days</b></td><td>policy term days (long)</td><td></td></tr>
+<tr><td><b>effect_year</b></td><td>effect year (long)</td><td></td></tr>
+<tr><td><b>effect_month</b></td><td>effect month (string)</td><td></td></tr>
+<tr><td><b>gross_written_premium</b></td><td>GWP in SAR, excl. tax. Premium is a property, NOT a node.</td><td></td></tr>
+<tr><td><b>net_written_premium</b></td><td>net written premium (double)</td><td></td></tr>
+<tr><td><b>commission</b></td><td>commission (double)</td><td></td></tr>
+<tr><td><b>reported_loss_ratio</b></td><td>Loss ratio as reported by the insurer.</td><td></td></tr>
+<tr><td><b>calculated_loss_ratio_pct</b></td><td>Loss ratio as a percent (claims paid / GWP * 100). 100 = break-even.</td><td></td></tr>
+<tr><td><b>product_count</b></td><td>product count (long)</td><td></td></tr>
+<tr><td><b>event_count</b></td><td>event count (long). Rollup - precomputed.</td><td></td></tr>
+<tr><td><b>last_event_type</b></td><td>last event type (string)</td><td></td></tr>
+<tr><td><b>renewal_count</b></td><td>Number of renewals. 'Renewed more than once' -> renewal_count > 1.</td><td></td></tr>
+<tr><td><b>claim_count</b></td><td>Rollup: number of claims under the policy.</td><td></td></tr>
+<tr><td><b>open_claim_count</b></td><td>open claim count (long). Rollup - precomputed.</td><td></td></tr>
+<tr><td><b>fraud_flagged_claim_count</b></td><td>fraud flagged claim count (long). Rollup - precomputed.</td><td></td></tr>
+<tr><td><b>max_fraud_probability</b></td><td>max fraud probability (double)</td><td></td></tr>
+<tr><td><b>total_claimed</b></td><td>total claimed (double). Rollup - precomputed.</td><td></td></tr>
+<tr><td><b>total_approved</b></td><td>total approved (double). Rollup - precomputed.</td><td></td></tr>
+<tr><td><b>total_paid</b></td><td>Rollup: claims paid under the policy.</td><td></td></tr>
+<tr><td><b>total_outstanding</b></td><td>total outstanding (double). Rollup - precomputed.</td><td></td></tr>
+<tr><td><b>avg_settlement_days</b></td><td>avg settlement days (double). Rollup - precomputed.</td><td></td></tr>
+<tr><td><b>vehicle_count</b></td><td>vehicle count (long). Rollup - precomputed.</td><td></td></tr>
+<tr><td><b>health_member_count</b></td><td>health member count (long). Rollup - precomputed.</td><td></td></tr>
+<tr><td><b>reinsurance_agreement_count</b></td><td>reinsurance agreement count (long)</td><td></td></tr>
+</table>
+</div>
+<div class="node-card">
+<div class="node-title">:Insurer</div>
+<div class="node-desc">Licensed insurance company. Rollups: saudization_pct, lines_of_business.</div>
+<table class="prop-table">
+<tr><th>Property</th><th>Description</th><th>Values</th></tr>
+<tr><td><b>insurer_id</b></td><td>insurer id (string)</td><td></td></tr>
+<tr><td><b>ia_id</b></td><td>ia id (string)</td><td></td></tr>
+<tr><td><b>name</b></td><td>name (string)</td><td></td></tr>
+<tr><td><b>name_arab</b></td><td>name arab (string)</td><td></td></tr>
+<tr><td><b>short_name</b></td><td>short name (string)</td><td></td></tr>
+<tr><td><b>cr_id</b></td><td>cr id (string)</td><td></td></tr>
+<tr><td><b>city</b></td><td>city (string)</td><td></td></tr>
+<tr><td><b>region</b></td><td>region (string)</td><td></td></tr>
+<tr><td><b>country</b></td><td>country (string)</td><td></td></tr>
+<tr><td><b>is_local</b></td><td>True for Saudi-domiciled insurers; false = foreign.</td><td></td></tr>
+<tr><td><b>is_health</b></td><td>is health (boolean)</td><td></td></tr>
+<tr><td><b>is_motor</b></td><td>is motor (boolean)</td><td></td></tr>
+<tr><td><b>is_p_c</b></td><td>is p c (boolean)</td><td></td></tr>
+<tr><td><b>is_p_s</b></td><td>is p s (boolean)</td><td></td></tr>
+<tr><td><b>lines_of_business</b></td><td>lines of business (string). Rollup - precomputed.</td><td></td></tr>
+<tr><td><b>employee_count</b></td><td>employee count (long)</td><td></td></tr>
+<tr><td><b>saudization_pct</b></td><td>Share of Saudi employees, percent.</td><td></td></tr>
+<tr><td><b>number_of_branches</b></td><td>number of branches (long)</td><td></td></tr>
+</table>
+</div>
+<div class="node-card">
+<div class="node-title">:Reinsurer</div>
+<div class="node-desc">Reinsurance company.</div>
+<table class="prop-table">
+<tr><th>Property</th><th>Description</th><th>Values</th></tr>
+<tr><td><b>reinsurer_id</b></td><td>reinsurer id (string)</td><td></td></tr>
+<tr><td><b>ia_id</b></td><td>ia id (string)</td><td></td></tr>
+<tr><td><b>name</b></td><td>name (string)</td><td></td></tr>
+<tr><td><b>name_arab</b></td><td>name arab (string)</td><td></td></tr>
+<tr><td><b>country</b></td><td>country (string)</td><td></td></tr>
+<tr><td><b>is_local</b></td><td>is local (boolean)</td><td></td></tr>
+</table>
+</div>
+<div class="node-card">
+<div class="node-title">:DistributionChannel</div>
+<div class="node-desc">Broker / agency / TPA that sold the policy.</div>
+<table class="prop-table">
+<tr><th>Property</th><th>Description</th><th>Values</th></tr>
+<tr><td><b>channel_id</b></td><td>channel id (string)</td><td></td></tr>
+<tr><td><b>name</b></td><td>name (string)</td><td></td></tr>
+<tr><td><b>name_arab</b></td><td>name arab (string)</td><td></td></tr>
+<tr><td><b>channel_type</b></td><td>broker | agency | tpa (profile).</td><td></td></tr>
+<tr><td><b>is_broker</b></td><td>is broker (boolean)</td><td></td></tr>
+<tr><td><b>is_agency</b></td><td>is agency (boolean)</td><td></td></tr>
+<tr><td><b>is_tpa</b></td><td>is tpa (boolean)</td><td></td></tr>
+<tr><td><b>is_local</b></td><td>is local (boolean)</td><td></td></tr>
+<tr><td><b>city</b></td><td>city (string)</td><td></td></tr>
+<tr><td><b>region</b></td><td>region (string)</td><td></td></tr>
+<tr><td><b>country</b></td><td>country (string)</td><td></td></tr>
+</table>
+</div>
+<div class="node-card">
+<div class="node-title">:Agent</div>
+<div class="node-desc">Individual agent working for a channel. Not linked to policies (source gap).</div>
+<table class="prop-table">
+<tr><th>Property</th><th>Description</th><th>Values</th></tr>
+<tr><td><b>agent_id</b></td><td>agent id (string)</td><td></td></tr>
+<tr><td><b>name</b></td><td>name (string)</td><td></td></tr>
+<tr><td><b>employment_type</b></td><td>employment type (string)</td><td></td></tr>
+<tr><td><b>specialization</b></td><td>specialization (string)</td><td></td></tr>
+<tr><td><b>years_of_experience</b></td><td>years of experience (long)</td><td></td></tr>
+<tr><td><b>hired_date</b></td><td>hired date (datetime)</td><td></td></tr>
+</table>
+</div>
+<div class="node-card">
+<div class="node-title">:Product</div>
+<div class="node-desc">Insurer's commercial product, mapped to an IA product.</div>
+<table class="prop-table">
+<tr><th>Property</th><th>Description</th><th>Values</th></tr>
+<tr><td><b>product_mapping_id</b></td><td>product mapping id (string)</td><td></td></tr>
+<tr><td><b>name</b></td><td>name (string)</td><td></td></tr>
+<tr><td><b>ia_product_name</b></td><td>ia product name (string)</td><td></td></tr>
+<tr><td><b>is_active</b></td><td>is active (boolean)</td><td></td></tr>
+<tr><td><b>approval_date</b></td><td>approval date (date)</td><td></td></tr>
+<tr><td><b>end_date</b></td><td>end date (date)</td><td></td></tr>
+</table>
+</div>
+<div class="node-card">
+<div class="node-title">:IAProduct</div>
+<div class="node-desc">Product in the Insurance Authority catalogue.</div>
+<table class="prop-table">
+<tr><th>Property</th><th>Description</th><th>Values</th></tr>
+<tr><td><b>insurance_authority_product_id</b></td><td>insurance authority product id (string)</td><td></td></tr>
+<tr><td><b>name</b></td><td>name (string)</td><td></td></tr>
+</table>
+</div>
+<div class="node-card">
+<div class="node-title">:Policyholder</div>
+<div class="node-desc">Party holding a policy - individual OR organisation (policyholder_type).</div>
+<div style="margin-bottom:8px">PII fields: <span class="pii-badge">🔒 date_of_birth</span> <span class="pii-badge">🔒 email</span> <span class="pii-badge">🔒 identity_number</span> <span class="pii-badge">🔒 phone</span> <span class="pii-badge">🔒 vat_no</span></div>
+<table class="prop-table">
+<tr><th>Property</th><th>Description</th><th>Values</th></tr>
+<tr><td><b>policyholder_sk</b></td><td>policyholder sk (string)</td><td></td></tr>
+<tr><td><b>name</b></td><td>name (string)</td><td></td></tr>
+<tr><td><b>policyholder_type</b></td><td>individual | organisation (profile).</td><td></td></tr>
+<tr><td><b>lob</b></td><td>lob (string)</td><td></td></tr>
+<tr><td><b>identity_type</b></td><td>identity type (string)</td><td></td></tr>
+<tr><td><b>identity_number</b> <span class="pii-badge">🔒 PII</span></td><td>identity number (string)</td><td></td></tr>
+<tr><td><b>cr_id</b></td><td>cr id (string)</td><td></td></tr>
+<tr><td><b>vat_no</b> <span class="pii-badge">🔒 PII</span></td><td>vat no (string)</td><td></td></tr>
+<tr><td><b>gender</b></td><td>gender (string)</td><td></td></tr>
+<tr><td><b>date_of_birth</b> <span class="pii-badge">🔒 PII</span></td><td>date of birth (datetime)</td><td></td></tr>
+<tr><td><b>nationality</b></td><td>nationality (string)</td><td></td></tr>
+<tr><td><b>city</b></td><td>city (string)</td><td></td></tr>
+<tr><td><b>region</b></td><td>region (string)</td><td></td></tr>
+<tr><td><b>country</b></td><td>country (string)</td><td></td></tr>
+<tr><td><b>employee_count</b></td><td>employee count (long)</td><td></td></tr>
+<tr><td><b>phone</b> <span class="pii-badge">🔒 PII</span></td><td>phone (string)</td><td></td></tr>
+<tr><td><b>email</b> <span class="pii-badge">🔒 PII</span></td><td>email (string)</td><td></td></tr>
+<tr><td><b>source_table</b></td><td>source table (string)</td><td></td></tr>
+<tr><td><b>source_id</b></td><td>source id (long)</td><td></td></tr>
+</table>
+</div>
+<div class="node-card">
+<div class="node-title">:HealthMember</div>
+<div class="node-desc">Health-insured person (primary or dependent). Rollups: age_years.</div>
+<div style="margin-bottom:8px">PII fields: <span class="pii-badge">🔒 beneficiary_number</span> <span class="pii-badge">🔒 date_of_birth</span></div>
+<table class="prop-table">
+<tr><th>Property</th><th>Description</th><th>Values</th></tr>
+<tr><td><b>member_id</b></td><td>member id (string)</td><td></td></tr>
+<tr><td><b>beneficiary_number</b> <span class="pii-badge">🔒 PII</span></td><td>beneficiary number (string)</td><td></td></tr>
+<tr><td><b>is_primary</b></td><td>is primary (boolean)</td><td></td></tr>
+<tr><td><b>is_policyholder</b></td><td>is policyholder (boolean)</td><td></td></tr>
+<tr><td><b>relationship_with_primary</b></td><td>self | spouse | child ... (profile).</td><td></td></tr>
+<tr><td><b>gender</b></td><td>gender (string)</td><td></td></tr>
+<tr><td><b>date_of_birth</b> <span class="pii-badge">🔒 PII</span></td><td>date of birth (date)</td><td></td></tr>
+<tr><td><b>age_years</b></td><td>Age in years, precomputed. Use instead of date_of_birth arithmetic.</td><td></td></tr>
+<tr><td><b>nationality</b></td><td>nationality (string)</td><td></td></tr>
+<tr><td><b>city</b></td><td>city (string)</td><td></td></tr>
+<tr><td><b>marital_status</b></td><td>marital status (string)</td><td></td></tr>
+<tr><td><b>employment_status</b></td><td>employment status (string)</td><td></td></tr>
+<tr><td><b>inception_date_for_member</b></td><td>inception date for member (datetime)</td><td></td></tr>
+<tr><td><b>policy_product_id</b></td><td>policy product id (long)</td><td></td></tr>
+</table>
+</div>
+<div class="node-card">
+<div class="node-title">:BenefitClass</div>
+<div class="node-desc">Benefit tier of a health member (e.g. VIP, A, B).</div>
+<table class="prop-table">
+<tr><th>Property</th><th>Description</th><th>Values</th></tr>
+<tr><td><b>class_id</b></td><td>class id (string)</td><td></td></tr>
+<tr><td><b>name</b></td><td>name (string)</td><td></td></tr>
+<tr><td><b>class_type</b></td><td>class type (string)</td><td></td></tr>
+<tr><td><b>class_status</b></td><td>class status (string)</td><td></td></tr>
+</table>
+</div>
+<div class="node-card">
+<div class="node-title">:Vehicle</div>
+<div class="node-desc">Insured vehicle.</div>
+<div style="margin-bottom:8px">PII fields: <span class="pii-badge">🔒 chassis_number</span> <span class="pii-badge">🔒 license_plate_number</span></div>
+<table class="prop-table">
+<tr><th>Property</th><th>Description</th><th>Values</th></tr>
+<tr><td><b>vehicle_id</b></td><td>vehicle id (string)</td><td></td></tr>
+<tr><td><b>license_plate_number</b> <span class="pii-badge">🔒 PII</span></td><td>license plate number (string)</td><td></td></tr>
+<tr><td><b>plate_type_eng</b></td><td>plate type eng (string)</td><td></td></tr>
+<tr><td><b>chassis_number</b> <span class="pii-badge">🔒 PII</span></td><td>chassis number (string)</td><td></td></tr>
+<tr><td><b>manufacturer</b></td><td>manufacturer (string)</td><td></td></tr>
+<tr><td><b>vehicle_model</b></td><td>vehicle model (string)</td><td></td></tr>
+<tr><td><b>vehicle_model_year</b></td><td>vehicle model year (long)</td><td></td></tr>
+<tr><td><b>year_manufactured</b></td><td>year manufactured (long)</td><td></td></tr>
+<tr><td><b>vehicle_type</b></td><td>vehicle type (string)</td><td></td></tr>
+<tr><td><b>usage_type</b></td><td>usage type (string)</td><td></td></tr>
+<tr><td><b>coverage_type</b></td><td>coverage type (string)</td><td></td></tr>
+<tr><td><b>seat_number</b></td><td>seat number (long)</td><td></td></tr>
+<tr><td><b>region_registration</b></td><td>region registration (string)</td><td></td></tr>
+<tr><td><b>is_ev</b></td><td>True for electric vehicles.</td><td></td></tr>
+<tr><td><b>ai_assisted_driving_function</b></td><td>True if the vehicle has AI-assisted driving.</td><td></td></tr>
+<tr><td><b>is_new_vehicle</b></td><td>is new vehicle (boolean)</td><td></td></tr>
+<tr><td><b>is_corporate</b></td><td>is corporate (boolean)</td><td></td></tr>
+<tr><td><b>is_imported</b></td><td>is imported (boolean)</td><td></td></tr>
+<tr><td><b>is_non_claim_discount_applied</b></td><td>is non claim discount applied (boolean)</td><td></td></tr>
+<tr><td><b>effect_date_for_vehicle</b></td><td>effect date for vehicle (datetime)</td><td></td></tr>
+<tr><td><b>policy_product_id</b></td><td>policy product id (long)</td><td></td></tr>
+</table>
+</div>
+<div class="node-card">
+<div class="node-title">:Claim</div>
+<div class="node-desc">Claim under a policy. Carries health/motor ROLLUPS (settlement_days, days_into_policy, repair cost, shares). Rollups: settlement_days, days_into_policy, claim_year, claim_month, is_open, approval_rate_pct, paid_rate_pct, health_net_amount, patient_share_amount, payer_share_amount, est_total_repair_cost_with_vat, diagnosis_codes, damage_types, pre_auth_count.</div>
+<table class="prop-table">
+<tr><th>Property</th><th>Description</th><th>Values</th></tr>
+<tr><td><b>claim_id</b></td><td>claim id (string)</td><td></td></tr>
+<tr><td><b>claim_number</b></td><td>claim number (string)</td><td></td></tr>
+<tr><td><b>claim_lob</b></td><td>Line of business of the claim.</td><td></td></tr>
+<tr><td><b>claim_status</b></td><td>claim status (string)</td><td></td></tr>
+<tr><td><b>is_open</b></td><td>True while the claim is unresolved.</td><td></td></tr>
+<tr><td><b>adjudication_outcome</b></td><td>adjudication outcome (string)</td><td></td></tr>
+<tr><td><b>claim_source</b></td><td>claim source (string)</td><td></td></tr>
+<tr><td><b>claim_creation_date</b></td><td>claim creation date (datetime)</td><td></td></tr>
+<tr><td><b>claim_year</b></td><td>claim year (long). Rollup - precomputed.</td><td></td></tr>
+<tr><td><b>claim_month</b></td><td>claim month (string). Rollup - precomputed.</td><td></td></tr>
+<tr><td><b>claim_resolution_date</b></td><td>claim resolution date (datetime)</td><td></td></tr>
+<tr><td><b>last_payment_date</b></td><td>last payment date (datetime)</td><td></td></tr>
+<tr><td><b>settlement_days</b></td><td>Days from creation to resolution. Use for 'settlement time'.</td><td></td></tr>
+<tr><td><b>days_into_policy</b></td><td>Days between policy effect date and claim creation. 'Claims within 30 days of policy start' -> <= 30.</td><td></td></tr>
+<tr><td><b>claimed_amount</b></td><td>claimed amount (double)</td><td></td></tr>
+<tr><td><b>approved_amount</b></td><td>approved amount (double)</td><td></td></tr>
+<tr><td><b>amount_paid</b></td><td>amount paid (double)</td><td></td></tr>
+<tr><td><b>amount_rejected</b></td><td>amount rejected (double)</td><td></td></tr>
+<tr><td><b>amount_outstanding</b></td><td>amount outstanding (double)</td><td></td></tr>
+<tr><td><b>copay_amount</b></td><td>copay amount (double)</td><td></td></tr>
+<tr><td><b>deductible_applied</b></td><td>deductible applied (double)</td><td></td></tr>
+<tr><td><b>tax</b></td><td>tax (double)</td><td></td></tr>
+<tr><td><b>approval_rate_pct</b></td><td>approval rate pct (double). Rollup - precomputed.</td><td></td></tr>
+<tr><td><b>paid_rate_pct</b></td><td>paid rate pct (double). Rollup - precomputed.</td><td></td></tr>
+<tr><td><b>rejection_reason</b></td><td>rejection reason (string)</td><td></td></tr>
+<tr><td><b>fraud_suspicion_indicator</b></td><td>True if flagged as suspected fraud.</td><td></td></tr>
+<tr><td><b>fraud_probability</b></td><td>Fraud score 0-100 (percent). '0.8' from a user means 80.</td><td></td></tr>
+<tr><td><b>pre_auth_count</b></td><td>pre auth count (long). Rollup - precomputed.</td><td></td></tr>
+<tr><td><b>pre_auth_requested</b></td><td>pre auth requested (double)</td><td></td></tr>
+<tr><td><b>pre_auth_approved</b></td><td>pre auth approved (double)</td><td></td></tr>
+<tr><td><b>service_line_count</b></td><td>service line count (long)</td><td></td></tr>
+<tr><td><b>health_net_amount</b></td><td>health net amount (double). Rollup - precomputed.</td><td></td></tr>
+<tr><td><b>patient_share_amount</b></td><td>patient share amount (double). Rollup - precomputed.</td><td></td></tr>
+<tr><td><b>payer_share_amount</b></td><td>payer share amount (double). Rollup - precomputed.</td><td></td></tr>
+<tr><td><b>diagnosis_codes</b></td><td>diagnosis codes (string). Rollup - precomputed.</td><td></td></tr>
+<tr><td><b>accident_count</b></td><td>accident count (long)</td><td></td></tr>
+<tr><td><b>damage_assessment_count</b></td><td>damage assessment count (long)</td><td></td></tr>
+<tr><td><b>est_total_repair_cost_with_vat</b></td><td>Rollup: total damage-assessment cost for motor claims.</td><td></td></tr>
+<tr><td><b>damage_types</b></td><td>damage types (string). Rollup - precomputed.</td><td></td></tr>
+<tr><td><b>total_injuries</b></td><td>total injuries (double)</td><td></td></tr>
+<tr><td><b>total_fatalities</b></td><td>total fatalities (double)</td><td></td></tr>
+</table>
+</div>
+<div class="node-card">
+<div class="node-title">:Claimant</div>
+<div class="node-desc">Party that filed the claim.</div>
+<div style="margin-bottom:8px">PII fields: <span class="pii-badge">🔒 claimant_identity_number</span></div>
+<table class="prop-table">
+<tr><th>Property</th><th>Description</th><th>Values</th></tr>
+<tr><td><b>claimant_id</b></td><td>claimant id (string)</td><td></td></tr>
+<tr><td><b>claimant_type</b></td><td>claimant type (string)</td><td></td></tr>
+<tr><td><b>claimant_identity_type</b></td><td>claimant identity type (string)</td><td></td></tr>
+<tr><td><b>claimant_identity_number</b> <span class="pii-badge">🔒 PII</span></td><td>claimant identity number (string)</td><td></td></tr>
+</table>
+</div>
+<div class="node-card">
+<div class="node-title">:PreAuthorization</div>
+<div class="node-desc">Prior approval of a health service. Reached ONLY via Claim-[:HAS_PRE_AUTH].</div>
+<table class="prop-table">
+<tr><th>Property</th><th>Description</th><th>Values</th></tr>
+<tr><td><b>pre_authorization_id</b></td><td>pre authorization id (string)</td><td></td></tr>
+<tr><td><b>pre_authorization_number</b></td><td>pre authorization number (string)</td><td></td></tr>
+<tr><td><b>pre_authorization_status</b></td><td>pre authorization status (string)</td><td></td></tr>
+<tr><td><b>adjudication_outcome</b></td><td>adjudication outcome (string)</td><td></td></tr>
+<tr><td><b>pre_authorization_creation_date</b></td><td>pre authorization creation date (datetime)</td><td></td></tr>
+<tr><td><b>pre_authorization_amount</b></td><td>pre authorization amount (double)</td><td></td></tr>
+<tr><td><b>approved_amount</b></td><td>approved amount (double)</td><td></td></tr>
+<tr><td><b>amount_rejected</b></td><td>amount rejected (double)</td><td></td></tr>
+<tr><td><b>fraud_suspicion_indicator</b></td><td>fraud suspicion indicator (boolean)</td><td></td></tr>
+<tr><td><b>fraud_probability</b></td><td>fraud probability (double)</td><td></td></tr>
+</table>
+</div>
+<div class="node-card">
+<div class="node-title">:HealthClaimLine</div>
+<div class="node-desc">Line item of a health claim.</div>
+<table class="prop-table">
+<tr><th>Property</th><th>Description</th><th>Values</th></tr>
+<tr><td><b>health_claim_id</b></td><td>health claim id (string)</td><td></td></tr>
+<tr><td><b>claim_type</b></td><td>claim type (string)</td><td></td></tr>
+<tr><td><b>sub_type</b></td><td>sub type (string)</td><td></td></tr>
+<tr><td><b>product_service</b></td><td>product service (string)</td><td></td></tr>
+<tr><td><b>service_date</b></td><td>service date (datetime)</td><td></td></tr>
+<tr><td><b>quantity</b></td><td>quantity (long)</td><td></td></tr>
+<tr><td><b>unit_price</b></td><td>unit price (double)</td><td></td></tr>
+<tr><td><b>net_amount</b></td><td>net amount (double)</td><td></td></tr>
+<tr><td><b>tax_amount</b></td><td>tax amount (double)</td><td></td></tr>
+<tr><td><b>patient_share_amount</b></td><td>patient share amount (double)</td><td></td></tr>
+<tr><td><b>payer_share_amount</b></td><td>payer share amount (double)</td><td></td></tr>
+<tr><td><b>currency</b></td><td>currency (string)</td><td></td></tr>
+</table>
+</div>
+<div class="node-card">
+<div class="node-title">:DiagnosisCode</div>
+<div class="node-desc">Diagnosis code on a claim line.</div>
+<table class="prop-table">
+<tr><th>Property</th><th>Description</th><th>Values</th></tr>
+<tr><td><b>code</b></td><td>code (string)</td><td></td></tr>
+</table>
+</div>
+<div class="node-card">
+<div class="node-title">:Accident</div>
+<div class="node-desc">Motor accident behind a claim.</div>
+<table class="prop-table">
+<tr><th>Property</th><th>Description</th><th>Values</th></tr>
+<tr><td><b>accident_id</b></td><td>accident id (string)</td><td></td></tr>
+<tr><td><b>accident_case_number</b></td><td>accident case number (string)</td><td></td></tr>
+<tr><td><b>accident_datetime</b></td><td>accident datetime (datetime)</td><td></td></tr>
+<tr><td><b>city</b></td><td>city (string)</td><td></td></tr>
+<tr><td><b>latitude</b></td><td>latitude (double)</td><td></td></tr>
+<tr><td><b>longitude</b></td><td>longitude (double)</td><td></td></tr>
+<tr><td><b>source</b></td><td>source (string)</td><td></td></tr>
+<tr><td><b>parties_count</b></td><td>parties count (long)</td><td></td></tr>
+<tr><td><b>injury_count</b></td><td>injury count (long)</td><td></td></tr>
+<tr><td><b>fatality_count</b></td><td>Number of fatalities in the accident.</td><td></td></tr>
+</table>
+</div>
+<div class="node-card">
+<div class="node-title">:DamageAssessment</div>
+<div class="node-desc">Repair-cost estimate for an accident.</div>
+<table class="prop-table">
+<tr><th>Property</th><th>Description</th><th>Values</th></tr>
+<tr><td><b>damage_assessment_id</b></td><td>damage assessment id (string)</td><td></td></tr>
+<tr><td><b>da_center</b></td><td>da center (string)</td><td></td></tr>
+<tr><td><b>center_city</b></td><td>center city (string)</td><td></td></tr>
+<tr><td><b>damage_type</b></td><td>damage type (string)</td><td></td></tr>
+<tr><td><b>da_initiated_date</b></td><td>da initiated date (datetime)</td><td></td></tr>
+<tr><td><b>da_completed_date</b></td><td>da completed date (datetime)</td><td></td></tr>
+<tr><td><b>labor_cost</b></td><td>labor cost (double)</td><td></td></tr>
+<tr><td><b>spare_parts_cost</b></td><td>spare parts cost (double)</td><td></td></tr>
+<tr><td><b>total_cost_with_vat</b></td><td>Estimated repair cost incl. VAT.</td><td></td></tr>
+</table>
+</div>
+<div class="node-card">
+<div class="node-title">:PolicyEvent</div>
+<div class="node-desc">Lifecycle event of a policy.</div>
+<table class="prop-table">
+<tr><th>Property</th><th>Description</th><th>Values</th></tr>
+<tr><td><b>policy_event_id</b></td><td>policy event id (string)</td><td></td></tr>
+<tr><td><b>event_type</b></td><td>event type (string)</td><td></td></tr>
+<tr><td><b>event_date</b></td><td>event date (datetime)</td><td></td></tr>
+<tr><td><b>event_status</b></td><td>event status (string)</td><td></td></tr>
+<tr><td><b>reason</b></td><td>reason (string)</td><td></td></tr>
+<tr><td><b>triggered_by</b></td><td>triggered by (string)</td><td></td></tr>
+</table>
+</div>
+<h2 id="relationships">Relationships</h2>
+<div class="rel-card">
+<div><div class="rel-name">:ISSUED_BY</div><div class="rel-arrow">(Policy) → (Insurer)</div></div>
+<div><div class="rel-desc">Policy issued by Insurer.</div>
+<div class="rel-example"><code style="font-size:12px;color:#0e8c6a">MATCH (p:Policy)-[:ISSUED_BY]->(i:Insurer)</code></div>
+</div></div>
+<div class="rel-card">
+<div><div class="rel-name">:SOLD_VIA</div><div class="rel-arrow">(Policy) → (DistributionChannel)</div></div>
+<div><div class="rel-desc">Policy sold via DistributionChannel.</div>
+<div class="rel-example"><code style="font-size:12px;color:#0e8c6a">MATCH (p:Policy)-[:SOLD_VIA]->(d:DistributionChannel)</code></div>
+</div></div>
+<div class="rel-card">
+<div><div class="rel-name">:HAS_PRODUCT</div><div class="rel-arrow">(Policy) → (Product)</div></div>
+<div><div class="rel-desc">Policy has product Product.</div>
+<div class="rel-example"><code style="font-size:12px;color:#0e8c6a">MATCH (p:Policy)-[x:HAS_PRODUCT]->(pr:Product)</code></div>
+</div></div>
+<div class="rel-card">
+<div><div class="rel-name">:REINSURED_BY</div><div class="rel-arrow">(Policy) → (Reinsurer)</div></div>
+<div><div class="rel-desc">reinsurance agreement lives on the edge</div>
+<div class="rel-example"><code style="font-size:12px;color:#0e8c6a">MATCH (p:Policy)-[x:REINSURED_BY]->(r:Reinsurer)</code></div>
+</div></div>
+<div class="rel-card">
+<div><div class="rel-name">:HAS_EVENT</div><div class="rel-arrow">(Policy) → (PolicyEvent)</div></div>
+<div><div class="rel-desc">Policy has event PolicyEvent.</div>
+<div class="rel-example"><code style="font-size:12px;color:#0e8c6a">MATCH (p:Policy)-[:HAS_EVENT]->(po:PolicyEvent)</code></div>
+</div></div>
+<div class="rel-card">
+<div><div class="rel-name">:REGULATED_AS</div><div class="rel-arrow">(Product) → (IAProduct)</div></div>
+<div><div class="rel-desc">Product regulated as IAProduct.</div>
+<div class="rel-example"><code style="font-size:12px;color:#0e8c6a">MATCH (p:Product)-[:REGULATED_AS]->(i:IAProduct)</code></div>
+</div></div>
+<div class="rel-card">
+<div><div class="rel-name">:WORKS_FOR</div><div class="rel-arrow">(Agent) → (DistributionChannel)</div></div>
+<div><div class="rel-desc">Agent works for DistributionChannel.</div>
+<div class="rel-example"><code style="font-size:12px;color:#0e8c6a">MATCH (a:Agent)-[:WORKS_FOR]->(d:DistributionChannel)</code></div>
+</div></div>
+<div class="rel-card">
+<div><div class="rel-name">:COVERED_BY</div><div class="rel-arrow">(HealthMember) → (Policy)</div></div>
+<div><div class="rel-desc">HealthMember covered by Policy.</div>
+<div class="rel-example"><code style="font-size:12px;color:#0e8c6a">MATCH (h:HealthMember)-[:COVERED_BY]->(p:Policy)</code></div>
+</div></div>
+<div class="rel-card">
+<div><div class="rel-name">:SPONSORED_BY</div><div class="rel-arrow">(HealthMember) → (Policyholder)</div></div>
+<div><div class="rel-desc">employer / sponsoring organisation</div>
+<div class="rel-example"><code style="font-size:12px;color:#0e8c6a">MATCH (h:HealthMember)-[:SPONSORED_BY]->(p:Policyholder)</code></div>
+</div></div>
+<div class="rel-card">
+<div><div class="rel-name">:IN_CLASS</div><div class="rel-arrow">(HealthMember) → (BenefitClass)</div></div>
+<div><div class="rel-desc">HealthMember in class BenefitClass.</div>
+<div class="rel-example"><code style="font-size:12px;color:#0e8c6a">MATCH (h:HealthMember)-[:IN_CLASS]->(b:BenefitClass)</code></div>
+</div></div>
+<div class="rel-card">
+<div><div class="rel-name">:INSURED_UNDER</div><div class="rel-arrow">(Vehicle) → (Policy)</div></div>
+<div><div class="rel-desc">Vehicle insured under Policy.</div>
+<div class="rel-example"><code style="font-size:12px;color:#0e8c6a">MATCH (v:Vehicle)-[:INSURED_UNDER]->(p:Policy)</code></div>
+</div></div>
+<div class="rel-card">
+<div><div class="rel-name">:OWNED_BY</div><div class="rel-arrow">(Vehicle) → (Policyholder)</div></div>
+<div><div class="rel-desc">Vehicle owned by Policyholder.</div>
+<div class="rel-example"><code style="font-size:12px;color:#0e8c6a">MATCH (v:Vehicle)-[:OWNED_BY]->(p:Policyholder)</code></div>
+</div></div>
+<div class="rel-card">
+<div><div class="rel-name">:UNDER_POLICY</div><div class="rel-arrow">(Claim) → (Policy)</div></div>
+<div><div class="rel-desc">~10% of claims have no policy edge</div>
+<div class="rel-example"><code style="font-size:12px;color:#0e8c6a">MATCH (c:Claim)-[x:UNDER_POLICY]->(p:Policy)</code></div>
+</div></div>
+<div class="rel-card">
+<div><div class="rel-name">:FOR_PRODUCT</div><div class="rel-arrow">(Claim) → (Product)</div></div>
+<div><div class="rel-desc">Claim for product Product.</div>
+<div class="rel-example"><code style="font-size:12px;color:#0e8c6a">MATCH (c:Claim)-[:FOR_PRODUCT]->(p:Product)</code></div>
+</div></div>
+<div class="rel-card">
+<div><div class="rel-name">:FILED_BY</div><div class="rel-arrow">(Claim) → (Claimant)</div></div>
+<div><div class="rel-desc">Claim filed by Claimant.</div>
+<div class="rel-example"><code style="font-size:12px;color:#0e8c6a">MATCH (c:Claim)-[:FILED_BY]->(cl:Claimant)</code></div>
+</div></div>
+<div class="rel-card">
+<div><div class="rel-name">:HAS_PRE_AUTH</div><div class="rel-arrow">(Claim) → (PreAuthorization)</div></div>
+<div><div class="rel-desc">Claim has pre auth PreAuthorization.</div>
+<div class="rel-example"><code style="font-size:12px;color:#0e8c6a">MATCH (c:Claim)-[:HAS_PRE_AUTH]->(p:PreAuthorization)</code></div>
+</div></div>
+<div class="rel-card">
+<div><div class="rel-name">:HAS_SERVICE_LINE</div><div class="rel-arrow">(Claim) → (HealthClaimLine)</div></div>
+<div><div class="rel-desc">Claim has service line HealthClaimLine.</div>
+<div class="rel-example"><code style="font-size:12px;color:#0e8c6a">MATCH (c:Claim)-[:HAS_SERVICE_LINE]->(h:HealthClaimLine)</code></div>
+</div></div>
+<div class="rel-card">
+<div><div class="rel-name">:INVOLVES_ACCIDENT</div><div class="rel-arrow">(Claim) → (Accident)</div></div>
+<div><div class="rel-desc">Claim involves accident Accident.</div>
+<div class="rel-example"><code style="font-size:12px;color:#0e8c6a">MATCH (c:Claim)-[:INVOLVES_ACCIDENT]->(a:Accident)</code></div>
+</div></div>
+<div class="rel-card">
+<div><div class="rel-name">:DIAGNOSED_WITH</div><div class="rel-arrow">(HealthClaimLine) → (DiagnosisCode)</div></div>
+<div><div class="rel-desc">HealthClaimLine diagnosed with DiagnosisCode.</div>
+<div class="rel-example"><code style="font-size:12px;color:#0e8c6a">MATCH (h:HealthClaimLine)-[:DIAGNOSED_WITH]->(d:DiagnosisCode)</code></div>
+</div></div>
+<div class="rel-card">
+<div><div class="rel-name">:ASSESSED_BY</div><div class="rel-arrow">(Accident) → (DamageAssessment)</div></div>
+<div><div class="rel-desc">Accident assessed by DamageAssessment.</div>
+<div class="rel-example"><code style="font-size:12px;color:#0e8c6a">MATCH (a:Accident)-[:ASSESSED_BY]->(d:DamageAssessment)</code></div>
+</div></div>
+<h2 id="paths">Common Multi-hop Paths</h2>
+<div class="path-block"><div class="path-name">claim_to_insurer</div><code style="white-space:pre;font-size:12px">MATCH (c:Claim)-[:UNDER_POLICY]->(p:Policy)-[:ISSUED_BY]->(i:Insurer)</code><div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px"><span style="font-size:11px;color:var(--muted)">triggers on:</span> <span class="kw-chip">claims by insurer</span><span class="kw-chip">settlement</span><span class="kw-chip">fraud by insurer</span></div></div>
+<div class="path-block"><div class="path-name">policy_to_ia_product</div><code style="white-space:pre;font-size:12px">MATCH (p:Policy)-[:HAS_PRODUCT]->(pr:Product)-[:REGULATED_AS]->(ia:IAProduct)</code><div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px"><span style="font-size:11px;color:var(--muted)">triggers on:</span> <span class="kw-chip">ia product</span><span class="kw-chip">policies per product</span></div></div>
+<div class="path-block"><div class="path-name">motor_owner</div><code style="white-space:pre;font-size:12px">MATCH (v:Vehicle)-[:INSURED_UNDER]->(p:Policy)-[:ISSUED_BY]->(i:Insurer), (v)-[:OWNED_BY]->(ph:Policyholder)</code><div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px"><span style="font-size:11px;color:var(--muted)">triggers on:</span> <span class="kw-chip">policyholder</span><span class="kw-chip">owner</span><span class="kw-chip">vehicles insured at</span></div></div>
+<div class="path-block"><div class="path-name">member_to_insurer</div><code style="white-space:pre;font-size:12px">MATCH (m:HealthMember)-[:COVERED_BY]->(p:Policy)-[:ISSUED_BY]->(i:Insurer)</code><div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px"><span style="font-size:11px;color:var(--muted)">triggers on:</span> <span class="kw-chip">member age</span><span class="kw-chip">members by insurer</span></div></div>
+<div class="path-block"><div class="path-name">member_sponsor</div><code style="white-space:pre;font-size:12px">MATCH (m:HealthMember)-[:SPONSORED_BY]->(ph:Policyholder)</code><div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px"><span style="font-size:11px;color:var(--muted)">triggers on:</span> <span class="kw-chip">sponsor</span><span class="kw-chip">organisation</span><span class="kw-chip">employer</span></div></div>
+<div class="path-block"><div class="path-name">claim_diagnosis</div><code style="white-space:pre;font-size:12px">MATCH (c:Claim)-[:HAS_SERVICE_LINE]->(l:HealthClaimLine)-[:DIAGNOSED_WITH]->(d:DiagnosisCode)</code><div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px"><span style="font-size:11px;color:var(--muted)">triggers on:</span> <span class="kw-chip">diagnosis</span><span class="kw-chip">icd</span></div></div>
+<div class="path-block"><div class="path-name">claim_repair_cost</div><code style="white-space:pre;font-size:12px">MATCH (c:Claim)-[:INVOLVES_ACCIDENT]->(a:Accident)-[:ASSESSED_BY]->(d:DamageAssessment)</code><div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px"><span style="font-size:11px;color:var(--muted)">triggers on:</span> <span class="kw-chip">repair cost</span><span class="kw-chip">damage</span></div></div>
+<div class="path-block"><div class="path-name">pre_auth</div><code style="white-space:pre;font-size:12px">MATCH (c:Claim)-[:HAS_PRE_AUTH]->(pa:PreAuthorization)   // no Policy edge on PreAuthorization</code><div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px"><span style="font-size:11px;color:var(--muted)">triggers on:</span> <span class="kw-chip">pre-auth</span><span class="kw-chip">pre-authorization</span><span class="kw-chip">prior approval</span></div></div>
+<div class="path-block"><div class="path-name">reinsurance_terms</div><code style="white-space:pre;font-size:12px">MATCH (p:Policy)-[x:REINSURED_BY]->(r:Reinsurer)  // x.agreement_type, x.quota_share_percentage</code><div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px"><span style="font-size:11px;color:var(--muted)">triggers on:</span> </div></div>
+<div class="path-block"><div class="path-name">time_series_monthly</div><code style="white-space:pre;font-size:12px">MATCH (p:Policy) WHERE p.issue_date IS NOT NULL RETURN p.issue_date.year AS yr, p.issue_date.month AS mo, count(p) AS n ORDER BY yr, mo</code><div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px"><span style="font-size:11px;color:var(--muted)">triggers on:</span> </div></div>
+<h2 id="keywords">Label Keywords</h2>
+<p style="color:var(--muted);font-size:13px;margin-bottom:12px">These keywords trigger inclusion of each node label in <code>schema_for_question()</code>. Edit in <code>label_keywords</code> section of data_dictionary.yaml.</p>
+<div class="kw-section"><div class="kw-label">:Policy</div><div class="kw-chips"><span class="kw-chip">policy</span><span class="kw-chip">policies</span><span class="kw-chip">premium</span><span class="kw-chip">gwp</span><span class="kw-chip">loss ratio</span><span class="kw-chip">renewal</span><span class="kw-chip">cancelled</span><span class="kw-chip">expiring</span><span class="kw-chip">active</span></div></div>
+<div class="kw-section"><div class="kw-label">:Insurer</div><div class="kw-chips"><span class="kw-chip">insurer</span><span class="kw-chip">insurers</span><span class="kw-chip">carrier</span><span class="kw-chip">company</span><span class="kw-chip">saudization</span><span class="kw-chip">local</span><span class="kw-chip">foreign</span></div></div>
+<div class="kw-section"><div class="kw-label">:Reinsurer</div><div class="kw-chips"><span class="kw-chip">reinsurer</span><span class="kw-chip">reinsured</span><span class="kw-chip">reinsurance</span><span class="kw-chip">quota share</span><span class="kw-chip">agreement</span></div></div>
+<div class="kw-section"><div class="kw-label">:DistributionChannel</div><div class="kw-chips"><span class="kw-chip">channel</span><span class="kw-chip">broker</span><span class="kw-chip">agency</span><span class="kw-chip">tpa</span><span class="kw-chip">distribution</span></div></div>
+<div class="kw-section"><div class="kw-label">:Agent</div><div class="kw-chips"><span class="kw-chip">agent</span><span class="kw-chip">agents</span></div></div>
+<div class="kw-section"><div class="kw-label">:Product</div><div class="kw-chips"><span class="kw-chip">product</span><span class="kw-chip">products</span></div></div>
+<div class="kw-section"><div class="kw-label">:IAProduct</div><div class="kw-chips"><span class="kw-chip">ia product</span><span class="kw-chip">authority product</span><span class="kw-chip">regulated</span></div></div>
+<div class="kw-section"><div class="kw-label">:Policyholder</div><div class="kw-chips"><span class="kw-chip">policyholder</span><span class="kw-chip">owner</span><span class="kw-chip">organisation</span><span class="kw-chip">organization</span><span class="kw-chip">sponsor</span><span class="kw-chip">employer</span></div></div>
+<div class="kw-section"><div class="kw-label">:HealthMember</div><div class="kw-chips"><span class="kw-chip">member</span><span class="kw-chip">members</span><span class="kw-chip">beneficiary</span><span class="kw-chip">dependent</span><span class="kw-chip">age</span><span class="kw-chip">relationship</span></div></div>
+<div class="kw-section"><div class="kw-label">:BenefitClass</div><div class="kw-chips"><span class="kw-chip">class</span><span class="kw-chip">benefit class</span><span class="kw-chip">tier</span></div></div>
+<div class="kw-section"><div class="kw-label">:Vehicle</div><div class="kw-chips"><span class="kw-chip">vehicle</span><span class="kw-chip">vehicles</span><span class="kw-chip">car</span><span class="kw-chip">manufacturer</span><span class="kw-chip">electric</span><span class="kw-chip">ev</span><span class="kw-chip">plate</span><span class="kw-chip">ai assisted</span></div></div>
+<div class="kw-section"><div class="kw-label">:Claim</div><div class="kw-chips"><span class="kw-chip">claim</span><span class="kw-chip">claims</span><span class="kw-chip">settlement</span><span class="kw-chip">outstanding</span><span class="kw-chip">fraud</span><span class="kw-chip">approved</span><span class="kw-chip">rejected</span><span class="kw-chip">paid</span></div></div>
+<div class="kw-section"><div class="kw-label">:Claimant</div><div class="kw-chips"><span class="kw-chip">claimant</span><span class="kw-chip">filed by</span></div></div>
+<div class="kw-section"><div class="kw-label">:PreAuthorization</div><div class="kw-chips"><span class="kw-chip">pre-auth</span><span class="kw-chip">pre-authorization</span><span class="kw-chip">pre-authorisation</span><span class="kw-chip">preauth</span><span class="kw-chip">prior approval</span></div></div>
+<div class="kw-section"><div class="kw-label">:HealthClaimLine</div><div class="kw-chips"><span class="kw-chip">service line</span><span class="kw-chip">patient share</span><span class="kw-chip">payer share</span><span class="kw-chip">line item</span></div></div>
+<div class="kw-section"><div class="kw-label">:DiagnosisCode</div><div class="kw-chips"><span class="kw-chip">diagnosis</span><span class="kw-chip">icd</span><span class="kw-chip">condition</span></div></div>
+<div class="kw-section"><div class="kw-label">:Accident</div><div class="kw-chips"><span class="kw-chip">accident</span><span class="kw-chip">accidents</span><span class="kw-chip">fatality</span><span class="kw-chip">injury</span><span class="kw-chip">crash</span></div></div>
+<div class="kw-section"><div class="kw-label">:DamageAssessment</div><div class="kw-chips"><span class="kw-chip">damage</span><span class="kw-chip">repair</span><span class="kw-chip">assessment</span><span class="kw-chip">repair cost</span></div></div>
+<div class="kw-section"><div class="kw-label">:PolicyEvent</div><div class="kw-chips"><span class="kw-chip">event</span><span class="kw-chip">events</span><span class="kw-chip">endorsement</span><span class="kw-chip">reinstatement</span></div></div>
+<h2 id="topics">Allowed Topics (Guardrail)</h2>
+<p style="color:var(--muted);font-size:13px;margin-bottom:8px">Questions must contain at least one of these substrings to pass the input guardrail. Edit in <code>allowed_topics</code> section.</p>
+<div class="topic-chips"><span class="topic-chip">accident</span><span class="topic-chip">accidents</span><span class="topic-chip">active</span><span class="topic-chip">agency</span><span class="topic-chip">agent</span><span class="topic-chip">agents</span><span class="topic-chip">agreement</span><span class="topic-chip">annual</span><span class="topic-chip">approved</span><span class="topic-chip">assessment</span><span class="topic-chip">authorisation</span><span class="topic-chip">authority</span><span class="topic-chip">authorization</span><span class="topic-chip">average</span><span class="topic-chip">beneficiary</span><span class="topic-chip">benefit</span><span class="topic-chip">breakdown</span><span class="topic-chip">broker</span><span class="topic-chip">brokers</span><span class="topic-chip">by</span><span class="topic-chip">cancellation</span><span class="topic-chip">cancelled</span><span class="topic-chip">channel</span><span class="topic-chip">channels</span><span class="topic-chip">cities</span><span class="topic-chip">city</span><span class="topic-chip">claim</span><span class="topic-chip">claimant</span><span class="topic-chip">claims</span><span class="topic-chip">class</span><span class="topic-chip">compare</span><span class="topic-chip">count</span><span class="topic-chip">damage</span><span class="topic-chip">dependent</span><span class="topic-chip">dependents</span><span class="topic-chip">diagnoses</span><span class="topic-chip">diagnosis</span><span class="topic-chip">electric</span><span class="topic-chip">ev</span><span class="topic-chip">expiring</span><span class="topic-chip">expiry</span><span class="topic-chip">fatalities</span><span class="topic-chip">fatality</span><span class="topic-chip">foreign</span><span class="topic-chip">fraud</span><span class="topic-chip">fraudulent</span><span class="topic-chip">gwp</span><span class="topic-chip">health</span><span class="topic-chip">how</span><span class="topic-chip">ia</span><span class="topic-chip">icd</span><span class="topic-chip">injury</span><span class="topic-chip">insurer</span><span class="topic-chip">insurers</span><span class="topic-chip">journey</span><span class="topic-chip">list</span><span class="topic-chip">local</span><span class="topic-chip">loss</span><span class="topic-chip">manufacturer</span><span class="topic-chip">many</span><span class="topic-chip">me</span><span class="topic-chip">member</span><span class="topic-chip">members</span><span class="topic-chip">month</span><span class="topic-chip">monthly</span><span class="topic-chip">motor</span><span class="topic-chip">organisation</span><span class="topic-chip">organisations</span><span class="topic-chip">organization</span><span class="topic-chip">outstanding</span><span class="topic-chip">overview</span><span class="topic-chip">paid</span><span class="topic-chip">patient</span><span class="topic-chip">payer</span><span class="topic-chip">plate</span><span class="topic-chip">policies</span><span class="topic-chip">policy</span><span class="topic-chip">policyholder</span><span class="topic-chip">policyholders</span><span class="topic-chip">pre-auth</span><span class="topic-chip">pre-authorisation</span><span class="topic-chip">pre-authorization</span><span class="topic-chip">preauth</span><span class="topic-chip">premium</span><span class="topic-chip">premiums</span><span class="topic-chip">product</span><span class="topic-chip">products</span><span class="topic-chip">quarter</span><span class="topic-chip">quarterly</span><span class="topic-chip">quota</span><span class="topic-chip">ratio</span><span class="topic-chip">region</span><span class="topic-chip">reinsurance</span><span class="topic-chip">reinsured</span><span class="topic-chip">reinsurer</span><span class="topic-chip">reinsurers</span><span class="topic-chip">rejected</span><span class="topic-chip">rejection</span><span class="topic-chip">renewal</span><span class="topic-chip">renewals</span><span class="topic-chip">renewed</span><span class="topic-chip">repair</span><span class="topic-chip">report</span><span class="topic-chip">saudisation</span><span class="topic-chip">saudization</span><span class="topic-chip">settlement</span><span class="topic-chip">share</span><span class="topic-chip">show</span><span class="topic-chip">sponsor</span><span class="topic-chip">sponsoring</span><span class="topic-chip">summarize</span><span class="topic-chip">summary</span><span class="topic-chip">suspicious</span><span class="topic-chip">top</span><span class="topic-chip">total</span><span class="topic-chip">trend</span><span class="topic-chip">trends</span><span class="topic-chip">vehicle</span><span class="topic-chip">vehicles</span><span class="topic-chip">year</span><span class="topic-chip">yearly</span><span class="topic-chip">ia product</span><span class="topic-chip">loss ratio</span><span class="topic-chip">quota share</span><span class="topic-chip">by month</span><span class="topic-chip">by year</span><span class="topic-chip">by quarter</span><span class="topic-chip">show me</span><span class="topic-chip">how many</span><span class="topic-chip">pre-authorization</span></div>
+</div></body></html>

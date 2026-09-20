@@ -82,7 +82,7 @@ def cmd_stats():
         "DamageAssessment":   "MATCH (n:DamageAssessment) RETURN count(n) AS c",
     }
 
-    print("\n📊 RP Knowledge Graph — Node Counts")
+    print("\n📊 IA Knowledge Graph — Node Counts")
     print("─" * 40)
     total_nodes = 0
     for label, q in node_queries.items():
