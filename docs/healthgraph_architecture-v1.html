@@ -166,7 +166,7 @@
       <span class="chip">Neo4j knowledge graph</span>
       <span class="chip">GraphRAG · vector + traversal</span>
       <span class="chip">Contextual memory</span>
-      <span class="chip">LibreChat UI</span>
+      <span class="chip">Insurance Authority UI</span>
       <span class="chip">Auditable answers</span>
     </div>
   </div>
@@ -201,7 +201,7 @@
     <div class="diagram">
       <svg viewBox="0 0 900 640" role="img" aria-labelledby="flowtitle flowdesc">
         <title id="flowtitle">Runtime request flow</title>
-        <desc id="flowdesc">A question enters from LibreChat through an OpenAI-compatible bridge into contextual memory, is routed to either text-to-Cypher or a hybrid retriever, reads the Neo4j knowledge graph, and returns a grounded answer that loops back to memory. A branch from the knowledge graph produces a narrated stat report.</desc>
+        <desc id="flowdesc">A question enters from Insurance Authority through an OpenAI-compatible bridge into contextual memory, is routed to either text-to-Cypher or a hybrid retriever, reads the Neo4j knowledge graph, and returns a grounded answer that loops back to memory. A branch from the knowledge graph produces a narrated stat report.</desc>
         <defs>
           <marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
             <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
@@ -210,7 +210,7 @@
 
         <!-- nodes -->
         <g class="node-g b-indigo"><rect class="node nbox" x="330" y="20" width="240" height="56"/>
-          <text class="t" x="450" y="44" text-anchor="middle">LibreChat</text>
+          <text class="t" x="450" y="44" text-anchor="middle">Insurance Authority</text>
           <text class="s" x="450" y="62" text-anchor="middle">chat UI · transcript · auth</text></g>
 
         <g class="node-g b-indigo"><rect class="node nbox" x="330" y="100" width="240" height="56"/>
@@ -339,8 +339,8 @@
       <div class="card i">
         <span class="layer">Interface &amp; bridge</span>
         <h3>Chat surface &amp; OpenAI bridge</h3>
-        <p>LibreChat is the UI — it stores conversations, handles auth and multi-user, and sends the full transcript on every request. The bridge speaks OpenAI back but routes each turn through the contextual chain.</p>
-        <div class="mods"><span class="mod">LibreChat</span><span class="mod">api/openai_compat.py</span><span class="mod">librechat.yaml</span></div>
+        <p>Insurance Authority is the UI — it stores conversations, handles auth and multi-user, and sends the full transcript on every request. The bridge speaks OpenAI back but routes each turn through the contextual chain.</p>
+        <div class="mods"><span class="mod">Insurance Authority</span><span class="mod">api/openai_compat.py</span><span class="mod">Insurance Authority.yaml</span></div>
       </div>
 
       <div class="card t">
@@ -391,7 +391,7 @@
     <div class="steps">
       <div class="step"><div class="n"></div><div>
         <h4>The message arrives</h4>
-        <p>Someone types a question in LibreChat. The transcript — this turn plus everything before it — is posted to the OpenAI-compatible bridge.</p></div></div>
+        <p>Someone types a question in Insurance Authority. The transcript — this turn plus everything before it — is posted to the OpenAI-compatible bridge.</p></div></div>
       <div class="step"><div class="n"></div><div>
         <h4>Memory resolves the follow-up</h4>
         <p>The question gates through memory first. A fresh question passes straight through; a follow-up like <code>which of those leave a balance?</code> is rewritten into a standalone question using the entities in focus.</p></div></div>

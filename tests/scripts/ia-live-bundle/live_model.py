@@ -1,7 +1,7 @@
 """IA knowledge graph - LIVE schema single source of truth.
 
 Generates, from one definition:
-  questions.yaml               64 ground-truth queries against the live graph
+  questions.yaml               65 ground-truth queries against the live graph
   ia_live_dictionary.yaml      text2cypher catalog describing the live graph
   Modelfile.text2cypher-ia     Ollama Modelfile (schema/direction blocks generated, rules + few-shots curated)
 
@@ -149,15 +149,21 @@ q("Q06","policy","Gross written premium by insurer","rows","""
    MATCH (p:Policy)-[:ISSUED_BY]->(i:Insurer)
    RETURN i.name AS insurer, round(sum(p.gross_written_premium), 2) AS gwp ORDER BY gwp DESC""")
 q("Q07","policy","Loss ratio by insurer","rows","""
-   MATCH (p:Policy)-[:ISSUED_BY]->(i:Insurer) WHERE p.calculated_loss_ratio_pct IS NOT NULL
-   RETURN i.name AS insurer, round(avg(p.calculated_loss_ratio_pct), 2) AS avg_loss_ratio_pct ORDER BY avg_loss_ratio_pct DESC""",
-  tolerance=0.5, note="avg of policy-level calculated_loss_ratio_pct; reported_loss_ratio is the insurer-reported figure")
+   MATCH (p:Policy)-[:ISSUED_BY]->(i:Insurer)
+   WITH i.name AS insurer, sum(p.total_paid) AS paid, sum(p.gross_written_premium) AS gwp
+   WHERE gwp > 0
+   RETURN insurer, round(paid * 100.0 / gwp, 2) AS loss_ratio_pct ORDER BY loss_ratio_pct DESC""",
+  tolerance=0.5, note="premium-weighted: sum(total_paid)/sum(gwp) per insurer, matching mart_insurer_monthly_kpi. NEVER avg(calculated_loss_ratio_pct) at group level - one tiny-premium policy distorts the mean (avg-of-ratios vs ratio-of-sums)")
 q("Q08","policy","Loss ratio by line of business","rows","""
-   MATCH (p:Policy) WHERE p.calculated_loss_ratio_pct IS NOT NULL
-   RETURN p.line_of_business AS line_of_business, round(avg(p.calculated_loss_ratio_pct), 2) AS avg_loss_ratio_pct ORDER BY avg_loss_ratio_pct DESC""", tolerance=0.5)
+   MATCH (p:Policy)
+   WITH p.line_of_business AS line_of_business, sum(p.total_paid) AS paid, sum(p.gross_written_premium) AS gwp
+   WHERE gwp > 0
+   RETURN line_of_business, round(paid * 100.0 / gwp, 2) AS loss_ratio_pct ORDER BY loss_ratio_pct DESC""",
+  tolerance=0.5, note="premium-weighted, same rule as Q07")
 q("Q09","policy","Policies with loss ratio over 100 percent","rows","""
    MATCH (p:Policy) WHERE p.calculated_loss_ratio_pct > ${loss_ratio_full}
-   RETURN p.policy_number AS policy_number, p.calculated_loss_ratio_pct AS loss_ratio_pct ORDER BY loss_ratio_pct DESC""")
+   RETURN p.policy_number AS policy_number, p.calculated_loss_ratio_pct AS loss_ratio_pct ORDER BY loss_ratio_pct DESC""",
+  note="per-policy filter - the ONE legitimate use of calculated_loss_ratio_pct")
 q("Q10","policy","Policies by distribution channel type","rows","""
    MATCH (p:Policy)-[:SOLD_VIA]->(c:DistributionChannel)
    RETURN c.channel_type AS channel_type, count(p) AS policy_count ORDER BY policy_count DESC""")
@@ -321,6 +327,13 @@ q("Q63","claims","Claims by claimant type","rows","""
    MATCH (c:Claim)-[:FILED_BY]->(cl:Claimant) RETURN cl.claimant_type AS claimant_type, count(c) AS claim_count ORDER BY claim_count DESC""")
 q("Q64","claims","Claims filed within 30 days of policy start","count","""
    MATCH (c:Claim) WHERE c.days_into_policy >= 0 AND c.days_into_policy <= 30 RETURN count(c) AS early_claims""")
+q("Q65","policy","Top 5 insurers by loss ratio with at least 50 policies","topk","""
+   MATCH (p:Policy)-[:ISSUED_BY]->(i:Insurer)
+   WITH i.name AS insurer, sum(p.total_paid) AS paid, sum(p.gross_written_premium) AS gwp, count(p) AS policy_count
+   WHERE gwp > 0 AND policy_count >= 50
+   RETURN insurer, round(paid * 100.0 / gwp, 2) AS loss_ratio_pct, policy_count
+   ORDER BY loss_ratio_pct DESC, insurer LIMIT 5""", topk=5,
+  note="teaches the weighted formula + a HAVING-style filter; the demo's refinement question")
 
 # ============================================================================
 # 3. Emit questions.yaml
@@ -350,10 +363,11 @@ def write_dictionary():
         )
     rels = [dict(type=t, **{"from": f_}, to=to, **({"properties": p} if p else {}), **({"note": n} if n else {})) for f_, t, to, p, n in RELS]
     doc = dict(
-        catalog=dict(name="IA Insurance Knowledge Graph (live)", version="live-1.0", generated=str(dt.date.today()),
+        catalog=dict(name="IA Insurance Knowledge Graph (live)", version="live-1.1", generated=str(dt.date.today()),
                      source="db.schema dump of bolt://localhost:7687"),
         schema_notes=dict(
             rollups="Policy and Claim carry precomputed rollups (claim_count, total_paid, settlement_days, days_into_policy, ...). Use the flat property for policy-level or claim-level totals; traverse only for per-entity breakdowns.",
+            loss_ratio="calculated_loss_ratio_pct is PER-POLICY only (filter/inspect single policies). Any group-level loss ratio (by insurer/LoB/channel/region) = sum(total_paid) * 100.0 / sum(gross_written_premium) with a gwp > 0 guard - never avg the per-policy pct (one tiny-premium policy distorts the mean). This matches mart_insurer_monthly_kpi.",
             claims_to_insurer="(Claim)-[:UNDER_POLICY]->(Policy)-[:ISSUED_BY]->(Insurer). ~10% of claims have no UNDER_POLICY edge.",
             pre_auth="PreAuthorization is reachable ONLY through (Claim)-[:HAS_PRE_AUTH]->; there is no policy edge on it.",
             policyholder="One Policyholder label for individuals and organisations (policyholder_type). Motor policyholders: (Vehicle)-[:OWNED_BY]->(Policyholder). Health sponsors: (HealthMember)-[:SPONSORED_BY]->(Policyholder).",
@@ -367,7 +381,7 @@ def write_dictionary():
                      "Claim.adjudication_outcome","Claim.claim_lob","PreAuthorization.pre_authorization_status","DistributionChannel.channel_type",
                      "Policyholder.policyholder_type","Vehicle.coverage_type","PolicyEvent.event_type","REINSURED_BY.agreement_type","Claimant.claimant_type"]},
         common_paths=[dict(name=x["id"], question=x["question"], cypher=x["expected_cypher"]) for x in Q if x["id"] in
-                      ("Q23","Q30","Q34","Q43","Q49","Q50","Q52","Q55")],
+                      ("Q07","Q23","Q30","Q34","Q43","Q49","Q50","Q52","Q55")],
     )
     with open("ia_live_dictionary.yaml", "w") as f:
         yaml.dump(doc, f, sort_keys=False, width=120, default_flow_style=False, allow_unicode=True)
@@ -376,9 +390,9 @@ def write_dictionary():
 # 5. Emit Modelfile
 # ============================================================================
 TYPE_MARK = {"DateTime": "*", "Date": "+"}
-FEWSHOT_IDS = ["Q01","Q02","Q03","Q05","Q06","Q07","Q09","Q10","Q11","Q12","Q13","Q14","Q16","Q17","Q18","Q19","Q21","Q22","Q23","Q24",
+FEWSHOT_IDS = ["Q01","Q02","Q03","Q05","Q06","Q07","Q08","Q09","Q10","Q11","Q12","Q13","Q14","Q16","Q17","Q18","Q19","Q21","Q22","Q23","Q24",
                "Q25","Q27","Q28","Q30","Q31","Q32","Q33","Q35","Q37","Q38","Q39","Q42","Q43","Q45","Q47","Q48","Q49","Q50","Q51","Q52",
-               "Q53","Q55","Q57","Q58","Q59","Q60","Q61","Q62","Q63","Q64"]
+               "Q53","Q55","Q57","Q58","Q59","Q60","Q61","Q62","Q63","Q64","Q65"]
 
 def schema_block():
     lines = []
@@ -454,6 +468,11 @@ NEVER produce:
   WRONG:   datetime(p.issue_date).year     substring(p.issue_date, 0, 4)
   CORRECT: p.issue_date.year
 - Comparing a Date (+) property with datetime(): m.date_of_birth < date() - duration({years: 60})
+- avg(p.calculated_loss_ratio_pct) for ANY group-level loss ratio ("by insurer" / "by line of business" /
+  "by channel" / "by region") — one tiny-premium policy distorts the mean (avg-of-ratios ≠ ratio-of-sums)
+  WRONG:   RETURN i.name AS insurer, round(avg(p.calculated_loss_ratio_pct), 2) AS avg_loss_ratio_pct
+  CORRECT: WITH i.name AS insurer, sum(p.total_paid) AS paid, sum(p.gross_written_premium) AS gwp
+           WHERE gwp > 0 RETURN insurer, round(paid * 100.0 / gwp, 2) AS loss_ratio_pct
 - LIMIT on an aggregated "by X" result — "claims by insurer" returns every insurer, no LIMIT
 - Extra columns the user did not ask for — "count of X" returns ONE count column, nothing else
 - Row listings when the user asked "how many" — return count(...) only
@@ -481,7 +500,9 @@ These are precomputed. Use the property, do not traverse+aggregate:
 __ROLLUPS__
   active policy        → p.is_active = true          cancelled → p.is_cancelled = true
   premium              → p.gross_written_premium (Premium is NOT a node)
-  loss ratio           → p.calculated_loss_ratio_pct  (reported_loss_ratio = insurer-reported)
+  loss ratio (ONE policy)     → p.calculated_loss_ratio_pct  (reported_loss_ratio = insurer-reported)
+  loss ratio (by ANY grouping) → sum(p.total_paid) * 100.0 / sum(p.gross_written_premium) with WHERE gwp > 0
+                                 — NEVER avg the per-policy pct
   renewed more than once → p.renewal_count > 1
   open claim           → c.is_open = true
   settlement time      → c.settlement_days
@@ -567,11 +588,11 @@ PROP_DESC = {  # friendly descriptions for the properties users ask about; the r
  "Policy.is_active": "True if the policy is currently in force. Use for 'active policies'.",
  "Policy.is_cancelled": "True if cancelled. Pair with cancellation_reason.",
  "Policy.gross_written_premium": "GWP in SAR, excl. tax. Premium is a property, NOT a node.",
- "Policy.calculated_loss_ratio_pct": "Loss ratio as a percent (claims paid / GWP * 100). 100 = break-even.",
+ "Policy.calculated_loss_ratio_pct": "PER-POLICY loss ratio percent (total_paid / GWP * 100). For any group-level loss ratio use sum(total_paid)*100/sum(gwp) - NEVER avg this.",
  "Policy.reported_loss_ratio": "Loss ratio as reported by the insurer.",
  "Policy.renewal_count": "Number of renewals. 'Renewed more than once' -> renewal_count > 1.",
  "Policy.claim_count": "Rollup: number of claims under the policy.",
- "Policy.total_paid": "Rollup: claims paid under the policy.",
+ "Policy.total_paid": "Rollup: claims paid under the policy. Numerator of group-level loss ratios.",
  "Policy.line_of_business": "health | motor | pc | ps (profile actual values).",
  "Claim.is_open": "True while the claim is unresolved.",
  "Claim.settlement_days": "Days from creation to resolution. Use for 'settlement time'.",
@@ -626,6 +647,7 @@ LABEL_KEYWORDS = {
 }
 PATH_KEYWORDS = {
  "claim_to_insurer": ["claims by insurer","settlement","fraud by insurer"],
+ "loss_ratio_weighted": ["loss ratio","loss ratio by insurer","loss ratio by line of business"],
  "policy_to_ia_product": ["ia product","policies per product"],
  "motor_owner": ["policyholder","owner","vehicles insured at"],
  "member_to_insurer": ["member age","members by insurer"],
@@ -636,6 +658,7 @@ PATH_KEYWORDS = {
 }
 COMMON_PATHS = {
  "claim_to_insurer": "MATCH (c:Claim)-[:UNDER_POLICY]->(p:Policy)-[:ISSUED_BY]->(i:Insurer)",
+ "loss_ratio_weighted": "MATCH (p:Policy)-[:ISSUED_BY]->(i:Insurer) WITH i.name AS insurer, sum(p.total_paid) AS paid, sum(p.gross_written_premium) AS gwp WHERE gwp > 0 RETURN insurer, round(paid * 100.0 / gwp, 2) AS loss_ratio_pct  // NEVER avg(calculated_loss_ratio_pct) at group level",
  "policy_to_ia_product": "MATCH (p:Policy)-[:HAS_PRODUCT]->(pr:Product)-[:REGULATED_AS]->(ia:IAProduct)",
  "motor_owner": "MATCH (v:Vehicle)-[:INSURED_UNDER]->(p:Policy)-[:ISSUED_BY]->(i:Insurer), (v)-[:OWNED_BY]->(ph:Policyholder)",
  "member_to_insurer": "MATCH (m:HealthMember)-[:COVERED_BY]->(p:Policy)-[:ISSUED_BY]->(i:Insurer)",
@@ -678,6 +701,7 @@ def write_app_dictionary():
         "relationships": rels,
         "schema_notes": {
             "rollups": "Policy and Claim carry precomputed rollups (claim_count, total_paid, settlement_days, days_into_policy, calculated_loss_ratio_pct, renewal_count, is_active, is_open). ALWAYS use the flat property for policy/claim-level totals; traverse only for per-entity breakdowns.",
+            "loss_ratio": "calculated_loss_ratio_pct is PER-POLICY (filter/inspect one policy). Group-level loss ratio (by insurer/LoB/channel) = sum(total_paid) * 100.0 / sum(gross_written_premium) with gwp > 0 - NEVER avg the per-policy pct.",
             "premium": "Premium is Policy.gross_written_premium - there is NO Premium node.",
             "claims_to_insurer": "(Claim)-[:UNDER_POLICY]->(Policy)-[:ISSUED_BY]->(Insurer). ~10% of claims have no UNDER_POLICY edge.",
             "pre_auth": "PreAuthorization hangs off Claim only: (c:Claim)-[:HAS_PRE_AUTH]->(pa). Never from Policy.",

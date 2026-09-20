@@ -1,11 +1,14 @@
 catalog:
   name: IA Insurance Knowledge Graph (live)
-  version: live-1.0
-  generated: '2026-09-14'
+  version: live-1.1
+  generated: '2026-09-16'
   source: db.schema dump of bolt://localhost:7687
 schema_notes:
   rollups: Policy and Claim carry precomputed rollups (claim_count, total_paid, settlement_days, days_into_policy, ...). Use
     the flat property for policy-level or claim-level totals; traverse only for per-entity breakdowns.
+  loss_ratio: calculated_loss_ratio_pct is PER-POLICY only (filter/inspect single policies). Any group-level loss ratio (by
+    insurer/LoB/channel/region) = sum(total_paid) * 100.0 / sum(gross_written_premium) with a gwp > 0 guard - never avg the
+    per-policy pct (one tiny-premium policy distorts the mean). This matches mart_insurer_monthly_kpi.
   claims_to_insurer: (Claim)-[:UNDER_POLICY]->(Policy)-[:ISSUED_BY]->(Insurer). ~10% of claims have no UNDER_POLICY edge.
   pre_auth: PreAuthorization is reachable ONLY through (Claim)-[:HAS_PRE_AUTH]->; there is no policy edge on it.
   policyholder: 'One Policyholder label for individuals and organisations (policyholder_type). Motor policyholders: (Vehicle)-[:OWNED_BY]->(Policyholder).
@@ -553,6 +556,15 @@ value_sets:
   REINSURED_BY.agreement_type: PROFILE
   Claimant.claimant_type: PROFILE
 common_paths:
+- name: Q07
+  question: Loss ratio by insurer
+  cypher: 'MATCH (p:Policy)-[:ISSUED_BY]->(i:Insurer)
+
+    WITH i.name AS insurer, sum(p.total_paid) AS paid, sum(p.gross_written_premium) AS gwp
+
+    WHERE gwp > 0
+
+    RETURN insurer, round(paid * 100.0 / gwp, 2) AS loss_ratio_pct ORDER BY loss_ratio_pct DESC'
 - name: Q23
   question: Claims by insurer
   cypher: 'MATCH (c:Claim)-[:UNDER_POLICY]->(:Policy)-[:ISSUED_BY]->(i:Insurer)

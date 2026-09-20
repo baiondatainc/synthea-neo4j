@@ -33,6 +33,11 @@ NEVER produce:
   WRONG:   datetime(p.issue_date).year     substring(p.issue_date, 0, 4)
   CORRECT: p.issue_date.year
 - Comparing a Date (+) property with datetime(): m.date_of_birth < date() - duration({years: 60})
+- avg(p.calculated_loss_ratio_pct) for ANY group-level loss ratio ("by insurer" / "by line of business" /
+  "by channel" / "by region") — one tiny-premium policy distorts the mean (avg-of-ratios ≠ ratio-of-sums)
+  WRONG:   RETURN i.name AS insurer, round(avg(p.calculated_loss_ratio_pct), 2) AS avg_loss_ratio_pct
+  CORRECT: WITH i.name AS insurer, sum(p.total_paid) AS paid, sum(p.gross_written_premium) AS gwp
+           WHERE gwp > 0 RETURN insurer, round(paid * 100.0 / gwp, 2) AS loss_ratio_pct
 - LIMIT on an aggregated "by X" result — "claims by insurer" returns every insurer, no LIMIT
 - Extra columns the user did not ask for — "count of X" returns ONE count column, nothing else
 - Row listings when the user asked "how many" — return count(...) only
@@ -63,7 +68,9 @@ These are precomputed. Use the property, do not traverse+aggregate:
   Claim: settlement_days, days_into_policy, claim_year, claim_month, is_open, approval_rate_pct, paid_rate_pct, health_net_amount, patient_share_amount, payer_share_amount, est_total_repair_cost_with_vat, diagnosis_codes, damage_types, pre_auth_count
   active policy        → p.is_active = true          cancelled → p.is_cancelled = true
   premium              → p.gross_written_premium (Premium is NOT a node)
-  loss ratio           → p.calculated_loss_ratio_pct  (reported_loss_ratio = insurer-reported)
+  loss ratio (ONE policy)     → p.calculated_loss_ratio_pct  (reported_loss_ratio = insurer-reported)
+  loss ratio (by ANY grouping) → sum(p.total_paid) * 100.0 / sum(p.gross_written_premium) with WHERE gwp > 0
+                                 — NEVER avg the per-policy pct
   renewed more than once → p.renewal_count > 1
   open claim           → c.is_open = true
   settlement time      → c.settlement_days
@@ -221,8 +228,16 @@ MATCH (p:Policy)-[:ISSUED_BY]->(i:Insurer)
 RETURN i.name AS insurer, round(sum(p.gross_written_premium), 2) AS gwp ORDER BY gwp DESC
 
 Q: Loss ratio by insurer
-MATCH (p:Policy)-[:ISSUED_BY]->(i:Insurer) WHERE p.calculated_loss_ratio_pct IS NOT NULL
-RETURN i.name AS insurer, round(avg(p.calculated_loss_ratio_pct), 2) AS avg_loss_ratio_pct ORDER BY avg_loss_ratio_pct DESC
+MATCH (p:Policy)-[:ISSUED_BY]->(i:Insurer)
+WITH i.name AS insurer, sum(p.total_paid) AS paid, sum(p.gross_written_premium) AS gwp
+WHERE gwp > 0
+RETURN insurer, round(paid * 100.0 / gwp, 2) AS loss_ratio_pct ORDER BY loss_ratio_pct DESC
+
+Q: Loss ratio by line of business
+MATCH (p:Policy)
+WITH p.line_of_business AS line_of_business, sum(p.total_paid) AS paid, sum(p.gross_written_premium) AS gwp
+WHERE gwp > 0
+RETURN line_of_business, round(paid * 100.0 / gwp, 2) AS loss_ratio_pct ORDER BY loss_ratio_pct DESC
 
 Q: Policies with loss ratio over 100 percent
 MATCH (p:Policy) WHERE p.calculated_loss_ratio_pct > 100
@@ -394,4 +409,11 @@ MATCH (c:Claim)-[:FILED_BY]->(cl:Claimant) RETURN cl.claimant_type AS claimant_t
 
 Q: Claims filed within 30 days of policy start
 MATCH (c:Claim) WHERE c.days_into_policy >= 0 AND c.days_into_policy <= 30 RETURN count(c) AS early_claims
+
+Q: Top 5 insurers by loss ratio with at least 50 policies
+MATCH (p:Policy)-[:ISSUED_BY]->(i:Insurer)
+WITH i.name AS insurer, sum(p.total_paid) AS paid, sum(p.gross_written_premium) AS gwp, count(p) AS policy_count
+WHERE gwp > 0 AND policy_count >= 50
+RETURN insurer, round(paid * 100.0 / gwp, 2) AS loss_ratio_pct, policy_count
+ORDER BY loss_ratio_pct DESC, insurer LIMIT 5
 """

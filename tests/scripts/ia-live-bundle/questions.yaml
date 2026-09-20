@@ -52,21 +52,29 @@ questions:
   category: policy
   question: Loss ratio by insurer
   compare: rows
-  expected_cypher: 'MATCH (p:Policy)-[:ISSUED_BY]->(i:Insurer) WHERE p.calculated_loss_ratio_pct IS NOT NULL
+  expected_cypher: 'MATCH (p:Policy)-[:ISSUED_BY]->(i:Insurer)
 
-    RETURN i.name AS insurer, round(avg(p.calculated_loss_ratio_pct), 2) AS avg_loss_ratio_pct ORDER BY avg_loss_ratio_pct
-    DESC'
+    WITH i.name AS insurer, sum(p.total_paid) AS paid, sum(p.gross_written_premium) AS gwp
+
+    WHERE gwp > 0
+
+    RETURN insurer, round(paid * 100.0 / gwp, 2) AS loss_ratio_pct ORDER BY loss_ratio_pct DESC'
   tolerance: 0.5
-  note: avg of policy-level calculated_loss_ratio_pct; reported_loss_ratio is the insurer-reported figure
+  note: 'premium-weighted: sum(total_paid)/sum(gwp) per insurer, matching mart_insurer_monthly_kpi. NEVER avg(calculated_loss_ratio_pct)
+    at group level - one tiny-premium policy distorts the mean (avg-of-ratios vs ratio-of-sums)'
 - id: Q08
   category: policy
   question: Loss ratio by line of business
   compare: rows
-  expected_cypher: 'MATCH (p:Policy) WHERE p.calculated_loss_ratio_pct IS NOT NULL
+  expected_cypher: 'MATCH (p:Policy)
 
-    RETURN p.line_of_business AS line_of_business, round(avg(p.calculated_loss_ratio_pct), 2) AS avg_loss_ratio_pct ORDER
-    BY avg_loss_ratio_pct DESC'
+    WITH p.line_of_business AS line_of_business, sum(p.total_paid) AS paid, sum(p.gross_written_premium) AS gwp
+
+    WHERE gwp > 0
+
+    RETURN line_of_business, round(paid * 100.0 / gwp, 2) AS loss_ratio_pct ORDER BY loss_ratio_pct DESC'
   tolerance: 0.5
+  note: premium-weighted, same rule as Q07
 - id: Q09
   category: policy
   question: Policies with loss ratio over 100 percent
@@ -74,6 +82,7 @@ questions:
   expected_cypher: 'MATCH (p:Policy) WHERE p.calculated_loss_ratio_pct > ${loss_ratio_full}
 
     RETURN p.policy_number AS policy_number, p.calculated_loss_ratio_pct AS loss_ratio_pct ORDER BY loss_ratio_pct DESC'
+  note: per-policy filter - the ONE legitimate use of calculated_loss_ratio_pct
 - id: Q10
   category: policy
   question: Policies by distribution channel type
@@ -465,3 +474,18 @@ questions:
   question: Claims filed within 30 days of policy start
   compare: count
   expected_cypher: MATCH (c:Claim) WHERE c.days_into_policy >= 0 AND c.days_into_policy <= 30 RETURN count(c) AS early_claims
+- id: Q65
+  category: policy
+  question: Top 5 insurers by loss ratio with at least 50 policies
+  compare: topk
+  expected_cypher: 'MATCH (p:Policy)-[:ISSUED_BY]->(i:Insurer)
+
+    WITH i.name AS insurer, sum(p.total_paid) AS paid, sum(p.gross_written_premium) AS gwp, count(p) AS policy_count
+
+    WHERE gwp > 0 AND policy_count >= 50
+
+    RETURN insurer, round(paid * 100.0 / gwp, 2) AS loss_ratio_pct, policy_count
+
+    ORDER BY loss_ratio_pct DESC, insurer LIMIT 5'
+  topk: 5
+  note: teaches the weighted formula + a HAVING-style filter; the demo's refinement question
