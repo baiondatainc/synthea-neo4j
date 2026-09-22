@@ -1,7 +1,7 @@
 catalog:
   name: IA Insurance Knowledge Graph (live)
   version: live-1.1
-  generated: '2026-09-16'
+  generated: '2026-09-22'
   source: db.schema dump of bolt://localhost:7687
 schema_notes:
   rollups: Policy and Claim carry precomputed rollups (claim_count, total_paid, settlement_days, days_into_policy, ...). Use
