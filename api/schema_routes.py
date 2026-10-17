@@ -29,7 +29,10 @@ Returns:
 from __future__ import annotations
 
 import logging
+import re
+from xml.sax.saxutils import escape as xml_escape, quoteattr as xml_quoteattr
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import Response
 
 from graph.connection import Neo4jConnection
 from metadata.catalog import get_catalog
@@ -329,3 +332,475 @@ def policy_journey(policy_id: str) -> dict:
         "events": events,
         "counts": counts,
     }
+
+
+# ── Ontology (n10s) ──────────────────────────────────────────────────────
+#
+# The RP ontology (ia_ontology.ttl) is loaded into Neo4j via
+#   CALL n10s.onto.import.fetch("file:///ontology/ia_ontology.ttl", "Turtle")
+# which materialises three node types plus DOMAIN/RANGE edges:
+#   (:Class)                    ← owl:Class          (one per node label)
+#   (:Relationship)             ← owl:ObjectProperty (one per rel type)
+#   (:Property)                 ← owl:DatatypeProperty (one per property key)
+#   (:Class)<-[:DOMAIN]-(:Relationship)-[:RANGE]->(:Class)
+#   (:Property)-[:DOMAIN]->(:Class)
+#
+# Names/labels/comments/URIs come straight from the TTL, so this endpoint
+# exposes the ontology view that Neo4j Browser shows in the "Database
+# information" panel — just in a shape the metadata-ui can render.
+
+_ONT_CLASSES = """
+MATCH (c:Class)
+WHERE c.name IS NOT NULL
+OPTIONAL MATCH (p:Property)-[:DOMAIN]->(c)
+WITH c, collect(DISTINCT {
+  name:    coalesce(p.name, p.label, ''),
+  label:   coalesce(p.label, p.name, ''),
+  comment: coalesce(p.comment, ''),
+  uri:     coalesce(p.uri, '')
+}) AS props
+OPTIONAL MATCH (c)<-[:DOMAIN]-(rout:Relationship)-[:RANGE]->(tgt:Class)
+WITH c, props, collect(DISTINCT {
+  type:    coalesce(rout.name, rout.label, ''),
+  label:   coalesce(rout.label, rout.name, ''),
+  comment: coalesce(rout.comment, ''),
+  target:  coalesce(tgt.name, tgt.label, '')
+}) AS outgoing
+OPTIONAL MATCH (c)<-[:RANGE]-(rin:Relationship)-[:DOMAIN]->(src:Class)
+WITH c, props, outgoing, collect(DISTINCT {
+  type:    coalesce(rin.name, rin.label, ''),
+  label:   coalesce(rin.label, rin.name, ''),
+  comment: coalesce(rin.comment, ''),
+  source:  coalesce(src.name, src.label, '')
+}) AS incoming
+RETURN coalesce(c.name, c.label, '') AS name,
+       coalesce(c.label, c.name, '') AS label,
+       coalesce(c.comment, '')       AS comment,
+       coalesce(c.uri, '')           AS uri,
+       [p IN props WHERE p.name <> ''] AS properties,
+       [r IN outgoing WHERE r.type <> ''] AS outgoing,
+       [r IN incoming WHERE r.type <> ''] AS incoming
+ORDER BY name
+"""
+
+_ONT_RELATIONSHIPS = """
+MATCH (r:Relationship)
+WHERE r.name IS NOT NULL
+OPTIONAL MATCH (r)-[:DOMAIN]->(src:Class)
+WITH r, collect(DISTINCT coalesce(src.name, src.label)) AS from_labels
+OPTIONAL MATCH (r)-[:RANGE]->(tgt:Class)
+WITH r, from_labels, collect(DISTINCT coalesce(tgt.name, tgt.label)) AS to_labels
+RETURN coalesce(r.name, r.label, '')  AS type,
+       coalesce(r.label, r.name, '')  AS label,
+       coalesce(r.comment, '')        AS comment,
+       coalesce(r.uri, '')            AS uri,
+       [l IN from_labels WHERE l IS NOT NULL] AS from,
+       [l IN to_labels   WHERE l IS NOT NULL] AS to
+ORDER BY type
+"""
+
+_ONT_PROPERTIES = """
+MATCH (p:Property)
+WHERE p.name IS NOT NULL
+OPTIONAL MATCH (p)-[:DOMAIN]->(c:Class)
+WITH p, collect(DISTINCT coalesce(c.name, c.label)) AS domains
+OPTIONAL MATCH (p)-[:RANGE]->(rng)
+WITH p, domains, collect(DISTINCT coalesce(rng.name, rng.label, rng.uri)) AS ranges
+RETURN coalesce(p.name, p.label, '')  AS name,
+       coalesce(p.label, p.name, '')  AS label,
+       coalesce(p.comment, '')        AS comment,
+       coalesce(p.uri, '')            AS uri,
+       [d IN domains WHERE d IS NOT NULL] AS domains,
+       [r IN ranges  WHERE r IS NOT NULL] AS ranges
+ORDER BY name
+"""
+
+_ONT_METADATA = """
+OPTIONAL MATCH (o:Resource) WHERE 'http://www.w3.org/2002/07/owl#Ontology' IN labels(o)
+   OR any(k IN keys(o) WHERE k = 'uri' AND o.uri CONTAINS 'ontology')
+WITH collect(o)[0] AS onto
+RETURN
+  coalesce(onto.label, '')   AS label,
+  coalesce(onto.comment, '') AS comment,
+  coalesce(onto.uri, '')     AS uri
+"""
+
+
+@router.get("/ontology")
+def get_ontology() -> dict:
+    """
+    Return the n10s-loaded ontology as a structured payload the UI can render.
+
+    Shape:
+      {
+        "meta":   {"label": "...", "comment": "...", "uri": "..."},
+        "classes": [
+          {"name": "Policy", "label": "...", "comment": "...", "uri": "...",
+           "properties": [{"name": "...", "label": "...", "comment": "...", "uri": "..."}],
+           "outgoing":   [{"type": "ISSUED_BY", "label": "...", "comment": "...", "target": "Insurer"}],
+           "incoming":   [{"type": "UNDER_POLICY", "label": "...", "comment": "...", "source": "Claim"}]}
+        ],
+        "relationships": [
+          {"type": "ISSUED_BY", "label": "...", "comment": "...", "uri": "...",
+           "from": ["Policy"], "to": ["Insurer"]}
+        ],
+        "properties": [
+          {"name": "policy_id", "label": "...", "comment": "...", "uri": "...",
+           "domains": ["Policy"], "ranges": ["xsd:string"]}
+        ],
+        "totals": {"classes": N, "relationships": M, "properties": K}
+      }
+    """
+    try:
+        classes = Neo4jConnection.run_query(_ONT_CLASSES) or []
+    except Exception as e:
+        logger.warning(f"Ontology classes query failed: {e}")
+        classes = []
+    try:
+        rels = Neo4jConnection.run_query(_ONT_RELATIONSHIPS) or []
+    except Exception as e:
+        logger.warning(f"Ontology relationships query failed: {e}")
+        rels = []
+    try:
+        props = Neo4jConnection.run_query(_ONT_PROPERTIES) or []
+    except Exception as e:
+        logger.warning(f"Ontology properties query failed: {e}")
+        props = []
+    try:
+        meta_rows = Neo4jConnection.run_query(_ONT_METADATA) or []
+        meta = meta_rows[0] if meta_rows else {"label": "", "comment": "", "uri": ""}
+    except Exception as e:
+        logger.warning(f"Ontology metadata query failed: {e}")
+        meta = {"label": "", "comment": "", "uri": ""}
+
+    if not classes and not rels and not props:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "No ontology found in Neo4j. Load one with "
+                "CALL n10s.onto.import.fetch(\"file:///ontology/ia_ontology.ttl\", \"Turtle\")."
+            ),
+        )
+
+    return {
+        "meta": meta,
+        "classes": classes,
+        "relationships": rels,
+        "properties": props,
+        "totals": {
+            "classes": len(classes),
+            "relationships": len(rels),
+            "properties": len(props),
+        },
+    }
+
+
+# ── Per-class ontology export (Turtle / RDF-XML) ─────────────────────────
+#
+# Serialises the subset of the n10s-loaded ontology that pertains to one
+# class: the class declaration, its incoming + outgoing owl:ObjectProperty
+# declarations (both endpoints included so the file is self-contained), and
+# the owl:DatatypeProperty declarations for its properties.
+#
+# Output keeps the source ia: vocabulary (http://ia.gov.sa/ontology#) so a
+# round-trip through n10s import produces the same triples we started with.
+
+_ONT_EXPORT_CLASS = """
+MATCH (c:Class)
+WHERE c.name = $name OR c.label = $name
+WITH c LIMIT 1
+OPTIONAL MATCH (p:Property)-[:DOMAIN]->(c)
+WITH c, collect(DISTINCT p) AS class_props
+OPTIONAL MATCH (c)<-[:DOMAIN]-(rout:Relationship)-[:RANGE]->(tgt:Class)
+WITH c, class_props,
+     collect(DISTINCT {rel: rout, from: c, to: tgt}) AS outgoing
+OPTIONAL MATCH (c)<-[:RANGE]-(rin:Relationship)-[:DOMAIN]->(src:Class)
+WITH c, class_props, outgoing,
+     collect(DISTINCT {rel: rin, from: src, to: c}) AS incoming
+RETURN
+  {
+    name:    coalesce(c.name, c.label, ''),
+    label:   coalesce(c.label, c.name, ''),
+    comment: coalesce(c.comment, ''),
+    uri:     coalesce(c.uri, '')
+  } AS cls,
+  [p IN class_props | {
+    name:    coalesce(p.name, p.label, ''),
+    label:   coalesce(p.label, p.name, ''),
+    comment: coalesce(p.comment, ''),
+    uri:     coalesce(p.uri, '')
+  }] AS properties,
+  [t IN outgoing WHERE t.rel IS NOT NULL AND t.to IS NOT NULL | {
+    type:    coalesce(t.rel.name, t.rel.label, ''),
+    label:   coalesce(t.rel.label, t.rel.name, ''),
+    comment: coalesce(t.rel.comment, ''),
+    uri:     coalesce(t.rel.uri, ''),
+    from:    coalesce(t.from.name, t.from.label, ''),
+    to:      coalesce(t.to.name,   t.to.label, '')
+  }] AS outgoing,
+  [t IN incoming WHERE t.rel IS NOT NULL AND t.from IS NOT NULL | {
+    type:    coalesce(t.rel.name, t.rel.label, ''),
+    label:   coalesce(t.rel.label, t.rel.name, ''),
+    comment: coalesce(t.rel.comment, ''),
+    uri:     coalesce(t.rel.uri, ''),
+    from:    coalesce(t.from.name, t.from.label, ''),
+    to:      coalesce(t.to.name,   t.to.label, '')
+  }] AS incoming
+"""
+
+_IA_NS = "http://ia.gov.sa/ontology#"
+_OWL_NS = "http://www.w3.org/2002/07/owl#"
+_RDFS_NS = "http://www.w3.org/2000/01/rdf-schema#"
+_RDF_NS = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+_XSD_NS = "http://www.w3.org/2001/XMLSchema#"
+
+_LOCAL_NAME_OK = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
+
+
+def _local_name(uri: str, fallback: str) -> str:
+    """Extract the local part of a URI (after # or last /) for a QName."""
+    if uri:
+        for sep in ("#", "/"):
+            if sep in uri:
+                tail = uri.rsplit(sep, 1)[-1]
+                if tail and _LOCAL_NAME_OK.match(tail):
+                    return tail
+    return fallback
+
+
+def _ttl_str(s: str) -> str:
+    return '"' + (s or "").replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ") + '"'
+
+
+def _render_turtle(payload: dict) -> str:
+    cls = payload["cls"]
+    props = payload["properties"] or []
+    outgoing = payload["outgoing"] or []
+    incoming = payload["incoming"] or []
+
+    cls_name = _local_name(cls.get("uri", ""), cls.get("name") or "UnknownClass")
+    lines: list[str] = [
+        "# Per-class ontology export — RP IA Knowledge Graph",
+        f"# Class: {cls_name}",
+        f"@prefix ia:   <{_IA_NS}> .",
+        f"@prefix owl:  <{_OWL_NS}> .",
+        f"@prefix rdfs: <{_RDFS_NS}> .",
+        f"@prefix xsd:  <{_XSD_NS}> .",
+        "",
+        "# ---- Class ----",
+        f"ia:{cls_name} a owl:Class ;",
+        f"    rdfs:label {_ttl_str(cls.get('label') or cls_name)} ;",
+    ]
+    if cls.get("comment"):
+        lines.append(f"    rdfs:comment {_ttl_str(cls['comment'])} ;")
+    # replace trailing ';' on last stmt with '.'
+    lines[-1] = lines[-1].rstrip(" ;") + " ."
+    lines.append("")
+
+    # Referenced classes (so the file is self-contained) — declare each once.
+    referenced: dict[str, str] = {}
+    for rel in outgoing:
+        n = _local_name("", rel.get("to") or "")
+        if n and n != cls_name:
+            referenced.setdefault(n, rel.get("to") or n)
+    for rel in incoming:
+        n = _local_name("", rel.get("from") or "")
+        if n and n != cls_name:
+            referenced.setdefault(n, rel.get("from") or n)
+    if referenced:
+        lines.append("# ---- Referenced classes ----")
+        for local, label in referenced.items():
+            lines += [
+                f"ia:{local} a owl:Class ;",
+                f"    rdfs:label {_ttl_str(label)} .",
+                "",
+            ]
+
+    # Object properties
+    all_rels = outgoing + incoming
+    if all_rels:
+        lines.append("# ---- Object properties ----")
+        seen: set[str] = set()
+        for rel in all_rels:
+            rtype = _local_name(rel.get("uri", ""), rel.get("type") or "")
+            if not rtype or rtype in seen:
+                continue
+            seen.add(rtype)
+            frm = _local_name("", rel.get("from") or "")
+            to = _local_name("", rel.get("to") or "")
+            lines += [
+                f"ia:{rtype} a owl:ObjectProperty ;",
+                f"    rdfs:label {_ttl_str(rel.get('label') or rtype)} ;",
+            ]
+            if frm:
+                lines.append(f"    rdfs:domain ia:{frm} ;")
+            if to:
+                lines.append(f"    rdfs:range ia:{to} ;")
+            if rel.get("comment"):
+                lines.append(f"    rdfs:comment {_ttl_str(rel['comment'])} ;")
+            lines[-1] = lines[-1].rstrip(" ;") + " ."
+            lines.append("")
+
+    # Datatype properties
+    if props:
+        lines.append("# ---- Datatype properties ----")
+        for p in props:
+            pname = _local_name(p.get("uri", ""), p.get("name") or "")
+            if not pname:
+                continue
+            lines += [
+                f"ia:{pname} a owl:DatatypeProperty ;",
+                f"    rdfs:label {_ttl_str(p.get('label') or pname)} ;",
+                f"    rdfs:domain ia:{cls_name} ;",
+            ]
+            if p.get("comment"):
+                lines.append(f"    rdfs:comment {_ttl_str(p['comment'])} ;")
+            lines[-1] = lines[-1].rstrip(" ;") + " ."
+            lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _render_rdfxml(payload: dict) -> str:
+    cls = payload["cls"]
+    props = payload["properties"] or []
+    outgoing = payload["outgoing"] or []
+    incoming = payload["incoming"] or []
+
+    cls_name = _local_name(cls.get("uri", ""), cls.get("name") or "UnknownClass")
+
+    def about(local: str) -> str:
+        return xml_quoteattr(_IA_NS + local)
+
+    def res(local: str) -> str:
+        return xml_quoteattr(_IA_NS + local)
+
+    out: list[str] = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        "<!-- Per-class ontology export — RP IA Knowledge Graph -->",
+        f"<!-- Class: {xml_escape(cls_name)} -->",
+        "<rdf:RDF",
+        f'    xmlns:rdf="{_RDF_NS}"',
+        f'    xmlns:rdfs="{_RDFS_NS}"',
+        f'    xmlns:owl="{_OWL_NS}"',
+        f'    xmlns:xsd="{_XSD_NS}"',
+        f'    xmlns:ia="{_IA_NS}">',
+        "",
+        f"  <owl:Class rdf:about={about(cls_name)}>",
+        f"    <rdfs:label>{xml_escape(cls.get('label') or cls_name)}</rdfs:label>",
+    ]
+    if cls.get("comment"):
+        out.append(f"    <rdfs:comment>{xml_escape(cls['comment'])}</rdfs:comment>")
+    out.append("  </owl:Class>")
+    out.append("")
+
+    referenced: dict[str, str] = {}
+    for rel in outgoing:
+        n = _local_name("", rel.get("to") or "")
+        if n and n != cls_name:
+            referenced.setdefault(n, rel.get("to") or n)
+    for rel in incoming:
+        n = _local_name("", rel.get("from") or "")
+        if n and n != cls_name:
+            referenced.setdefault(n, rel.get("from") or n)
+    for local, label in referenced.items():
+        out += [
+            f"  <owl:Class rdf:about={about(local)}>",
+            f"    <rdfs:label>{xml_escape(label)}</rdfs:label>",
+            "  </owl:Class>",
+            "",
+        ]
+
+    seen: set[str] = set()
+    for rel in outgoing + incoming:
+        rtype = _local_name(rel.get("uri", ""), rel.get("type") or "")
+        if not rtype or rtype in seen:
+            continue
+        seen.add(rtype)
+        frm = _local_name("", rel.get("from") or "")
+        to = _local_name("", rel.get("to") or "")
+        out.append(f"  <owl:ObjectProperty rdf:about={about(rtype)}>")
+        out.append(f"    <rdfs:label>{xml_escape(rel.get('label') or rtype)}</rdfs:label>")
+        if frm:
+            out.append(f"    <rdfs:domain rdf:resource={res(frm)}/>")
+        if to:
+            out.append(f"    <rdfs:range rdf:resource={res(to)}/>")
+        if rel.get("comment"):
+            out.append(f"    <rdfs:comment>{xml_escape(rel['comment'])}</rdfs:comment>")
+        out.append("  </owl:ObjectProperty>")
+        out.append("")
+
+    for p in props:
+        pname = _local_name(p.get("uri", ""), p.get("name") or "")
+        if not pname:
+            continue
+        out.append(f"  <owl:DatatypeProperty rdf:about={about(pname)}>")
+        out.append(f"    <rdfs:label>{xml_escape(p.get('label') or pname)}</rdfs:label>")
+        out.append(f"    <rdfs:domain rdf:resource={res(cls_name)}/>")
+        if p.get("comment"):
+            out.append(f"    <rdfs:comment>{xml_escape(p['comment'])}</rdfs:comment>")
+        out.append("  </owl:DatatypeProperty>")
+        out.append("")
+
+    out.append("</rdf:RDF>")
+    return "\n".join(out) + "\n"
+
+
+_EXPORT_FORMATS = {
+    "turtle": ("text/turtle; charset=utf-8", "ttl", _render_turtle),
+    "ttl":    ("text/turtle; charset=utf-8", "ttl", _render_turtle),
+    "rdfxml": ("application/rdf+xml; charset=utf-8", "rdf", _render_rdfxml),
+    "rdf":    ("application/rdf+xml; charset=utf-8", "rdf", _render_rdfxml),
+    "xml":    ("application/rdf+xml; charset=utf-8", "rdf", _render_rdfxml),
+}
+
+
+@router.get("/ontology/{class_name}/export")
+def export_class_ontology(class_name: str, format: str = "turtle") -> Response:
+    """
+    Export the ontology subset for one class as an RDF file.
+
+    Query params:
+      format = turtle | rdfxml
+
+    The response is a downloadable file (Content-Disposition: attachment)
+    in the ia: vocabulary, matching the shape of ia_ontology.ttl so it can
+    be reloaded through n10s.onto.import.fetch.
+    """
+    fmt = (format or "turtle").lower().strip()
+    if fmt not in _EXPORT_FORMATS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported format {format!r}. Use one of: turtle, rdfxml.",
+        )
+
+    name = (class_name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="class_name is required")
+
+    try:
+        rows = Neo4jConnection.run_query(_ONT_EXPORT_CLASS, {"name": name})
+    except Exception as e:
+        logger.exception("Ontology export query failed")
+        raise HTTPException(status_code=500, detail=f"Ontology query failed: {e}")
+
+    if not rows or not rows[0].get("cls"):
+        raise HTTPException(
+            status_code=404,
+            detail=f"No ontology class found with name: {name}",
+        )
+
+    payload = rows[0]
+    mime, ext, render = _EXPORT_FORMATS[fmt]
+    body = render(payload)
+
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", name) or "class"
+    filename = f"ia_ontology_{safe}.{ext}"
+    return Response(
+        content=body,
+        media_type=mime,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
