@@ -220,7 +220,7 @@ def get_cypher_llm():
             # 8192 (was 4096): the Modelfile SYSTEM prompt (schema + ~55 few-shot
             # examples) is ~6k tokens. At 4096 it was truncated. NOTE: runtime
             # num_ctx OVERRIDES the Modelfile PARAMETER, so this is authoritative.
-            num_ctx=10240,
+            num_ctx=16384,
             keep_alive="24h",
         )
         logger.info(

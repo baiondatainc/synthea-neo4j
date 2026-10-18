@@ -1,0 +1,775 @@
+# dictionary_overrides.yaml — curated meaning for the Future Advisor (DoF) graph.
+# Matches the graph AS IMPORTED on 2026-10-18: labels Kpi, Series, KpiObservation, Source, Country,
+# relationships FOR_KPI, FOR_SOURCE, FOR_COUNTRY, FOR_CODE, FOR_DRIVER, FOR_CYCLE.
+# If you re-import with the corrected graph_map.yaml (KPI, OF_KPI, SOURCED_FROM ...), rename here too;
+# catalog_agent.py drops any path or example that names a label or type the live graph lacks.
+# Numbers never go in this file.
+
+base_model: qwen3:4b-instruct-2507-q4_K_M
+
+token_budget:
+  schema_char_budget: 7000
+  min_rel_budget: 250
+  min_path_budget: 200
+  max_values_shown: 4
+  max_prop_desc_chars: 80
+
+llm_context: >
+  Series nodes are SUMMARIES of a time series kept in PostgreSQL (n_points, first/last period, latest,
+  min, max, mean); `table` names the Postgres table and `measure` the indicator or metric. Kpi nodes define
+  macro indicators. Country codes are ISO alpha-3 (ARE, SAU, USA, GBR, CHN, IND ... plus IMF aggregates ADVANCED, EMERGING, DEVELOPING). Dubai fiscal series come from
+  gold.de_* tables and have no country. Fiscal values are AED millions.
+
+# ── Labels ──────────────────────────────────────────────────────────────────
+labels:
+  Kpi:
+    description: "Macro indicator definition: code, name, unit, frequency, category. Values are NOT here; they are on KpiObservation and summarised on Series."
+    properties:
+      code: {description: "Indicator code, e.g. gdp_real_growth, cpi_yoy, policy_rate, oil_brent_spot, bond_yield_10y."}
+      unit: {description: "pct | pct_gdp | usd | usd_bbl | index | persons | rate | AED_m."}
+      frequency: {description: "annual | monthly | quarterly | daily."}
+      category: {description: "macro | prices | tourism | macro_external | fiscal."}
+  Country:
+    description: "Country or area by ISO alpha-3 code: ARE United Arab Emirates (Dubai macro), SAU Saudi Arabia, USA United States, GBR, CHN, IND, DEU, JPN ...; IMF aggregates ADVANCED, EMERGING, DEVELOPING and regional groups (WEQ, EEQ, SAQ ...)."
+    properties:
+      code: {description: "ISO alpha-3 or IMF aggregate code."}
+  Source:
+    description: "Data publisher or internal system: IMF_WEO, WB_WDI, WB_DATA360, FRED (US), EIA (oil), BIS_CBPOL (policy rates), OECD_MEI (CPI), ECB, DSC (Dubai Statistics Centre), DET, DOF budget book."
+    properties:
+      code: {description: "Source code, e.g. IMF_WEO, FRED, DSC."}
+      tier: {description: "T1 official statistics, T2 secondary, T3 derived."}
+      kind: {description: "api | portal | file | dubai_fiscal | external_api."}
+      last_status: {description: "Result of the last ingest run."}
+      next_expected_release: {description: "Next expected publication date (release calendar)."}
+      enabled: {description: "False when the source is switched off."}
+  Series:
+    description: "Summary of ONE time series. External macro: table gold.gold_* with country_code and measure (= Kpi.code). Dubai fiscal: table gold.de_* with series_group / entity_code / account_code / cofog_code / sector_code / driver_group / metric and no country. Values stay in PostgreSQL."
+    properties:
+      table: {description: "PostgreSQL table: gold.gold_imf_weo, gold.gold_fred, gold.gold_eia, gold.gold_bis_cbpol, gold.gold_oecd_mei, gold.gold_ecb, gold.gold_wb_wdi, gold.gold_wb_data360, gold.de_fiscal_history, gold.de_revenue_entity, gold.de_revenue_account, gold.de_expenditure_entity, gold.de_cofog, gold.de_gdp_sector, gold.de_driver, gold.de_macro_baseline, gold.de_scenario_line, gold.de_scenario_macro, gold.de_measure_impact."}
+      measure: {description: "Indicator / metric code of the series (external: Kpi.code; Dubai: value_aed_m, budget_aed_m, actual_aed_m, recurrent_aed_m, capital_aed_m, real_aed_m, nominal_aed_m, employment ...)."}
+      country_code: {description: "ISO code for external series (ARE, SAU, USA, GBR, CHN, IND ... plus IMF aggregates ADVANCED, EMERGING, DEVELOPING); null for Dubai fiscal series."}
+      economy_group: {description: "IMF grouping (EM, AE) when present."}
+      series_group: {description: "Dubai fiscal history group: 'Total revenue' | 'Total expenditure'."}
+      entity_code: {description: "Dubai government entity code (E01 RTA, E02 DEWA, E03 DHA ...) for revenue/expenditure by entity."}
+      account_code: {description: "Revenue account (A1 Fees, A2 VAT share ...)."}
+      cofog_code: {description: "COFOG function (07 Health, 09 Education ...)."}
+      sector_code: {description: "ISIC section for GDP by sector (G wholesale & retail, I accommodation ...)."}
+      driver_group: {description: "Driver family for scenario drivers (oil_price, partner_demand ...)."}
+      metric: {description: "Metric name for long-format series (level, value, employment ...)."}
+      n_points: {description: "Number of observations."}
+      first_period: {description: "First period 'YYYY-MM-DD' (string)."}
+      last_period: {description: "Last period 'YYYY-MM-DD' (string); projections may run past today."}
+      latest_value: {description: "Value at last_period, in the indicator's unit."}
+      min_value: {description: "Minimum over the series."}
+      max_value: {description: "Maximum over the series."}
+      mean_value: {description: "Mean over the series."}
+      has_points: {description: "True when the full path is on the node (periods / values arrays, series of at most 400 points)."}
+      periods: {description: "Array of period strings 'YYYY-MM-DD', oldest first (only when has_points)."}
+      values: {description: "Array of values aligned with periods (only when has_points)."}
+  KpiObservation:
+    description: "A single ingested indicator value for a country and period from a source (the point data behind external Series)."
+    properties:
+      kpi_code: {description: "Indicator code (= Kpi.code)."}
+      geo: {description: "ISO alpha-3 country code (ARE, SAU, USA ...)."}
+      period: {description: "Observation period (native date)."}
+      value: {description: "Value in the Kpi unit."}
+      source_code: {description: "Publisher code (= Source.code)."}
+      confidence: {description: "Parser confidence 0-1."}
+      validated: {description: "True once accepted."}
+  KpiObservationRevision:
+    description: "Audit row when a later vintage revised a value: old_value → new_value for a kpi, geo and period."
+  Dataset:
+    description: "Gold dataset registered from a source: table_name, kpi_codes, period range, row and geo counts."
+  Document:
+    description: "Publication fetched from a source (PDF/CSV) with parse status."
+  IngestRun:
+    description: "One ingestion job for a source: mode, trigger, status, rows fetched / inserted / updated / revised."
+  DeMeasure:
+    description: "Dubai policy measure (fee change, new fee, stimulus) that can be switched on in a scenario."
+  DeScenarioDriver:
+    description: "Driver the scenario builder can move (code, label, unit, min/max/step), e.g. oil price, partner growth, US rate."
+  DeScenarioDriverValue:
+    description: "Value of a driver under a named scenario (baseline, downside ...)."
+  DeScenarioElasticity:
+    description: "Elasticity of a fiscal line to a driver (line_name, driver_code, elasticity)."
+  DeSource:
+    description: "Dubai fiscal data source level (L1 statistics centre, L2 DoF budget book) and what it provides."
+  ScenarioEngineRun: {description: "Scenario-engine execution with preset, overrides, focus year, created_by."}
+  ScenarioEngineConfig: {description: "Versioned scenario-engine configuration (is_current)."}
+  FiscalForecastConfig: {description: "Versioned fiscal-forecast configuration."}
+  BacktestRun: {description: "Walk-forward backtest execution: target_id, variant_id, metrics (MAPE, bias), folds."}
+  BacktestConfig: {description: "Versioned backtest configuration."}
+  BspCycle: {description: "One annual Budget Strategy Paper cycle."}
+  BspStage: {description: "Stage of a BSP cycle (M1-M5): number, milestone, owner, due_at, status, rework_loops."}
+  User: {description: "Platform user (analyst, reviewer)."}
+  PrismaMigrations: {description: "Database migration log — not business data; never query."}
+
+# ── Relationships ───────────────────────────────────────────────────────────
+relationships:
+  FOR_KPI:     {description: "Observation / revision is for this Kpi."}
+  FOR_COUNTRY: {description: "Series / observation is for this Country."}
+  FOR_SOURCE:  {description: "Observation / document / dataset / ingest run comes from this Source."}
+  FOR_CODE:    {description: "Driver value belongs to this scenario driver."}
+  FOR_DRIVER:  {description: "Elasticity is on this scenario driver."}
+  FOR_CYCLE:   {description: "Stage belongs to this BSP cycle."}
+
+# ── Keywords (en + ar) → label ──────────────────────────────────────────────
+label_keywords:
+  Kpi: [kpi, indicator, indicators, definition, unit, frequency, المؤشر, الوحدة]
+  Country: [country, countries, uae, emirates, dubai, saudi, us, usa, united states, america, euro, europe, world, الإمارات, دبي, السعودية, أمريكا, الولايات المتحدة]
+  Source: [source, sources, publisher, imf, world bank, fred, eia, bis, oecd, ecb, dsc, statistics centre, budget book, المصدر, صندوق النقد, البنك الدولي]
+  Series: [series, latest, last period, range, history, trend, gdp, growth, inflation, cpi, unemployment, population, oil, brent, wti, policy rate, interest rate, fed, bond yield, treasury, dollar, dollar index, fx, exchange rate, revenue, expenditure, spending, fees, vat, customs, entity, cofog, health, education, sector, tourism, trade, driver, baseline, scenario path, الناتج, النمو, التضخم, البطالة, النفط, سعر الفائدة, الإيرادات, النفقات, القطاع, السيناريو]
+  KpiObservation: [observation, observations, data point, value in, recorded, confidence, validated, المشاهدة, القيمة]
+  KpiObservationRevision: [revision, revisions, revised, old value, new value, vintage, المراجعة]
+  Dataset: [dataset, datasets, table, coverage, row count, مجموعة البيانات]
+  Document: [document, documents, publication, pdf, parse, الوثيقة]
+  IngestRun: [ingest, ingestion, load, fetched, overdue, failed, last run, الاستيراد]
+  DeMeasure: [measure, measures, policy measure, fee change, stimulus, الإجراء]
+  DeScenarioDriver: [driver, drivers, lever, levers, المحرك]
+  DeScenarioDriverValue: [driver value, under scenario, downside, baseline value]
+  DeScenarioElasticity: [elasticity, elasticities, sensitivity, beta, المرونة]
+  DeSource: [dubai source, fiscal source, level]
+  ScenarioEngineRun: [engine run, scenario run, preset, focus year]
+  BacktestRun: [backtest, backtests, mape, accuracy, variant]
+  BspCycle: [bsp, budget strategy paper, cycle, الورقة الاستراتيجية]
+  BspStage: [stage, stages, milestone, m1, m2, m3, m4, m5, due, owner, المرحلة]
+  User: [user, users, analyst, reviewer]
+
+path_keywords:
+  external_series: [latest, value of, history of, in uae, in the us, for saudi, since, range]
+  observations: [observation, data point, recorded, this year, by period, confidence]
+  dubai_fiscal: [total revenue, total expenditure, by entity, by account, by function, cofog, sector]
+  source_health: [overdue, failed, last fetched, source status, ingest]
+  drivers_scenarios: [driver, scenario, downside, baseline, elasticity]
+
+# ── Notes the Cypher model must respect ─────────────────────────────────────
+schema_notes:
+  series_values: "Series nodes carry a summary (n_points, first_period, last_period, latest_value, min_value, max_value, mean_value) and, when has_points = true (annual, quarterly, monthly series up to 400 points), the full path as parallel arrays periods[] and values[]. Daily series (FRED, EIA) have has_points = false: the path is in PostgreSQL."
+  clock: "Today is date(); the current year is date().year. 'Last N years' means substring(period, 0, 4) >= toString(date().year - N). IMF series run past today (projections to date().year + 5)."
+  trends: "For a trend / history / year-by-year question: filter the Series, then UNWIND range(0, size(s.periods) - 1) AS i and RETURN s.periods[i] AS period, s.values[i] AS value. Filter years with substring(s.periods[i], 0, 4) >= '2015'. Always add WHERE s.has_points = true."
+  external_vs_dubai: "External macro series: s.country_code and s.measure (= Kpi.code), s.table STARTS WITH 'gold.gold_'. Dubai fiscal series: s.table STARTS WITH 'gold.de_', no country_code; filter on series_group / entity_code / account_code / cofog_code / sector_code / driver_group."
+  no_series_kpi_edge: "There is NO edge from Series to Kpi. Join on code: MATCH (s:Series), (k:Kpi) WHERE s.measure = k.code. KpiObservation DOES have FOR_KPI."
+  countries: "Country.code and KpiObservation.geo are ISO alpha-3: 'ARE' UAE / Dubai macro, 'SAU' Saudi Arabia, 'USA' United States, 'GBR' UK, 'CHN' China, 'IND' India, 'DEU' Germany, 'JPN' Japan. IMF aggregates: 'ADVANCED', 'EMERGING', 'DEVELOPING'. Never use 'AE', 'US', 'SA', 'UAE', 'Dubai', 'America' as codes. Oil series (EIA) carry no meaningful country: filter on measure only."
+  us_sources: "US rates and dollar: gold.gold_fred (policy_rate, bond_yield_10y, fx_usd_index, country USA). US CPI monthly: gold.gold_oecd_mei. US GDP, inflation, unemployment annual: gold.gold_imf_weo with country_code 'USA'."
+  uae_sources: "UAE macro: gold.gold_imf_weo (country_code 'ARE'), gold.gold_wb_wdi, gold.gold_wb_data360, gold.gold_bis_cbpol (policy_rate ARE). Dubai fiscal: gold.de_* tables."
+  units: "Macro series use the Kpi unit (pct, pct_gdp, usd, usd_bbl, index). Dubai fiscal series are AED millions (measure ends in _aed_m)."
+  periods: "Series.first_period / last_period are strings 'YYYY-MM-DD': year = substring(s.last_period, 0, 4). KpiObservation.period is a native date: o.period.year."
+  provenance: "Always return the provenance next to the value: s.table, s.last_period (Series) or o.source_code, o.period (observations)."
+  no_numbers_from_memory: "Never put a number in the query that the user did not say; never answer from memory."
+
+common_paths:
+  external_series: "MATCH (s:Series)-[:FOR_COUNTRY]->(c:Country {code: 'ARE'}) WHERE s.measure = 'gdp_real_growth' RETURN s.table, s.last_period, s.latest_value"
+  series_with_unit: "MATCH (s:Series)-[:FOR_COUNTRY]->(c:Country), (k:Kpi) WHERE s.measure = k.code RETURN c.code, k.code, k.unit, s.latest_value"
+  observations: "MATCH (o:KpiObservation)-[:FOR_KPI]->(k:Kpi), (o)-[:FOR_COUNTRY]->(c:Country) RETURN c.code, k.code, o.period, o.value, o.source_code"
+  dubai_fiscal: "MATCH (s:Series) WHERE s.table STARTS WITH 'gold.de_' RETURN s.table, s.series_group, s.entity_code, s.measure, s.latest_value"
+  source_health: "MATCH (i:IngestRun)-[:FOR_SOURCE]->(src:Source) RETURN src.code, i.status, i.finished_at, i.rows_inserted"
+  drivers_scenarios: "MATCH (v:DeScenarioDriverValue)-[:FOR_CODE]->(d:DeScenarioDriver) RETURN v.scenario, d.code, d.label, v.value, d.unit"
+  elasticities: "MATCH (e:DeScenarioElasticity)-[:FOR_DRIVER]->(d:DeScenarioDriver) RETURN e.line_name, d.code, e.elasticity"
+  bsp: "MATCH (st:BspStage)-[:FOR_CYCLE]->(cy:BspCycle) RETURN cy.name, st.number, st.milestone, st.owner, st.due_at, st.status"
+
+allowed_topics:
+  - gdp
+  - growth
+  - inflation
+  - cpi
+  - unemployment
+  - population
+  - oil
+  - brent
+  - wti
+  - interest rate
+  - policy rate
+  - fed
+  - bond
+  - yield
+  - treasury
+  - dollar
+  - exchange rate
+  - fx
+  - current account
+  - fiscal balance
+  - debt
+  - revenue
+  - expenditure
+  - spending
+  - budget
+  - fiscal
+  - deficit
+  - surplus
+  - fees
+  - vat
+  - customs
+  - entity
+  - cofog
+  - health
+  - education
+  - sector
+  - tourism
+  - trade
+  - scenario
+  - baseline
+  - downside
+  - driver
+  - elasticity
+  - measure
+  - forecast
+  - projection
+  - backtest
+  - bsp
+  - stage
+  - milestone
+  - source
+  - dataset
+  - document
+  - observation
+  - revision
+  - ingest
+  - overdue
+  - imf
+  - world bank
+  - fred
+  - eia
+  - oecd
+  - bis
+  - ecb
+  - dsc
+  - dubai
+  - uae
+  - emirates
+  - saudi
+  - us
+  - usa
+  - united states
+  - euro
+  - world
+  - compare
+  - latest
+  - since
+  - range
+  - trend
+  - how many
+  - show me
+  - list
+  - top
+  - by year
+  - by country
+  - by entity
+  - by sector
+  - الناتج
+  - النمو
+  - التضخم
+  - البطالة
+  - النفط
+  - الفائدة
+  - الإيرادات
+  - النفقات
+  - الميزانية
+  - السيناريو
+  - التوقعات
+  - المصدر
+  - الإمارات
+  - دبي
+  - أمريكا
+
+# ── Cypher rules for the Modelfile ──────────────────────────────────────────
+cypher_rules: |
+  NEVER produce:
+  - SQL keywords (SELECT, FROM <table>, JOIN, GROUP BY), markdown fences, prose, more than one statement
+  - Write clauses: CREATE, DELETE, MERGE, SET, REMOVE, DROP, LOAD CSV
+  - apoc.* or any procedure: no apoc.date.*, no CALL, no YIELD. Current year is date().year
+  - Labels, relationships or properties not in the schema below. Kpi has NO period and NO value.
+  - An edge between Series and Kpi — it does not exist. Join on s.measure = k.code instead.
+  - Invented codes: kpi_code / measure / Kpi.code take ONLY codes from KPI CODES below ('INFLATION', 'GDP', 'OIL' are wrong)
+  - Country names or alpha-2 as codes: use 'ARE' not 'AE'/'UAE'/'Dubai', 'USA' not 'US'/'America', 'SAU' not 'SA'/'Saudi' (see COUNTRY CODES)
+  - ORDER BY or LIMIT before RETURN. Clause order is MATCH → WHERE → [WITH] → RETURN → ORDER BY → LIMIT:
+    WRONG:   MATCH (o:KpiObservation) WHERE ... ORDER BY o.period DESC LIMIT 1 RETURN o.value
+    CORRECT: MATCH (o:KpiObservation) WHERE ... RETURN o.value AS value, o.period AS period ORDER BY period DESC LIMIT 1
+  - Numbers the user did not say
+  ALWAYS produce:
+  - Start with MATCH / OPTIONAL MATCH / WITH / UNWIND
+  - Alias every returned expression: s.latest_value AS latest_value
+  - Provenance next to every value: s.table and s.last_period, or o.source_code and o.period
+  - A trailing LIMIT (default 100) on non-aggregate results
+  - "latest" / "current" → Series.latest_value with Series.last_period; "since when" → Series.first_period; "range" → min_value, max_value
+  - "trend" / "history" / "over time" / "by year" / "since 2015" / "year by year" → unwind the arrays:
+      MATCH (s:Series)-[:FOR_COUNTRY]->(c:Country {code: 'ARE'}) WHERE s.measure = 'gdp_real_growth' AND s.has_points = true
+      UNWIND range(0, size(s.periods) - 1) AS i
+      RETURN s.periods[i] AS period, s.values[i] AS value, s.table AS source_table ORDER BY period
+    TIME is the x-axis: period comes first in RETURN and ORDER BY period. Do not add a second grouping the user did not ask for.
+  - Year filter on the path: WHERE substring(s.periods[i], 0, 4) >= '2015' (after the UNWIND); compare two years by picking both indices in the same query
+  - RELATIVE windows anchor on the clock, never on a guessed year: "last 5 years" → substring(period, 0, 4) >= toString(date().year - 5) AND substring(period, 0, 4) <= toString(date().year);
+    "last decade" → date().year - 10; "next 3 years" / "projections" → > date().year. Never hard-code a year the user did not say.
+  - Trend output is ALWAYS ascending: ORDER BY period (never DESC). Only "latest" / "most recent N" questions use DESC.
+  - External series: (s:Series)-[:FOR_COUNTRY]->(c:Country {code: 'ARE'}) WHERE s.measure = '<code>'
+  - Dubai fiscal series: (s:Series) WHERE s.table STARTS WITH 'gold.de_' plus series_group / entity_code / account_code / cofog_code / sector_code
+  - Year from string periods: substring(s.last_period, 0, 4); from native dates: o.period.year
+  - Units: join Kpi on code when the unit is wanted: MATCH (k:Kpi {code: s.measure}) or WHERE s.measure = k.code
+  VOCABULARY:
+    "inflation" → cpi_yoy (annual) / cpi_monthly_yoy (monthly)   "GDP growth" → gdp_real_growth
+    "nominal GDP" → gdp_nominal_usd   "GDP per capita" → gdp_per_capita_usd   "unemployment" → unemployment_rate
+    "oil" / "Brent" → oil_brent_spot   "WTI" → oil_wti_spot   "oil forecast" → oil_brent_forecast
+    "policy rate" / "interest rate" / "Fed funds" → policy_rate   "10-year yield" / "treasury" → bond_yield_10y
+    "dollar index" / "DXY" → fx_usd_index   "euro dollar" → fx_eur_usd   "current account" → current_account_pct_gdp
+    "fiscal balance" / "deficit" → fiscal_balance_pct_gdp   "government debt" → gov_debt_pct_gdp
+    "exports" → exports_goods_services_pct_gdp   "FDI" → fdi_inflow_usd
+    "UAE" / "Emirates" / "Dubai macro" → Country 'ARE'   "US" / "America" / "Fed" → Country 'USA'   "Saudi" → 'SAU'
+    "UK" → 'GBR'   "China" → 'CHN'   "India" → 'IND'   "advanced economies" → 'ADVANCED'   "emerging markets" → 'EMERGING'
+
+examples:
+  # ── UAE / Dubai macro ─────────────────────────────────────────────────────
+  - q: Latest UAE real GDP growth
+    cypher: |
+      MATCH (s:Series)-[:FOR_COUNTRY]->(c:Country {code: 'ARE'})
+      WHERE s.measure = 'gdp_real_growth'
+      RETURN s.table AS source_table, s.last_period AS period, s.latest_value AS gdp_growth_pct, s.first_period AS since
+      ORDER BY period DESC LIMIT 10
+  - q: What is inflation in the UAE?
+    cypher: |
+      MATCH (s:Series)-[:FOR_COUNTRY]->(c:Country {code: 'ARE'})
+      WHERE s.measure IN ['cpi_yoy', 'cpi_monthly_yoy']
+      RETURN s.measure AS indicator, s.table AS source_table, s.last_period AS period, s.latest_value AS inflation_pct
+      ORDER BY period DESC LIMIT 10
+  - q: UAE unemployment rate and population
+    cypher: |
+      MATCH (s:Series)-[:FOR_COUNTRY]->(c:Country {code: 'ARE'})
+      WHERE s.measure IN ['unemployment_rate', 'population']
+      RETURN s.measure AS indicator, s.latest_value AS latest, s.last_period AS period, s.table AS source_table
+      ORDER BY indicator
+  - q: UAE policy rate from BIS
+    cypher: |
+      MATCH (s:Series)-[:FOR_COUNTRY]->(c:Country {code: 'ARE'})
+      WHERE s.measure = 'policy_rate' AND s.table = 'gold.gold_bis_cbpol'
+      RETURN s.latest_value AS policy_rate_pct, s.last_period AS period, s.first_period AS since, s.n_points AS months
+  - q: UAE fiscal balance and government debt as share of GDP
+    cypher: |
+      MATCH (s:Series)-[:FOR_COUNTRY]->(c:Country {code: 'ARE'})
+      WHERE s.measure IN ['fiscal_balance_pct_gdp', 'gov_debt_pct_gdp', 'current_account_pct_gdp']
+      RETURN s.measure AS indicator, s.latest_value AS pct_of_gdp, s.last_period AS period, s.table AS source_table
+      ORDER BY indicator
+  - q: Which indicators do we have for the UAE and from which tables?
+    cypher: |
+      MATCH (s:Series)-[:FOR_COUNTRY]->(c:Country {code: 'ARE'})
+      RETURN s.measure AS indicator, s.table AS source_table, s.first_period AS first_period, s.last_period AS last_period, s.n_points AS points
+      ORDER BY indicator, source_table LIMIT 100
+  - q: UAE exports and FDI from the World Bank
+    cypher: |
+      MATCH (s:Series)-[:FOR_COUNTRY]->(c:Country {code: 'ARE'})
+      WHERE s.table IN ['gold.gold_wb_wdi', 'gold.gold_wb_data360']
+      RETURN s.measure AS indicator, s.latest_value AS latest, s.last_period AS period, s.table AS source_table
+      ORDER BY indicator
+  - q: Since when do we have UAE data?
+    cypher: |
+      MATCH (s:Series)-[:FOR_COUNTRY]->(c:Country {code: 'ARE'})
+      RETURN min(s.first_period) AS earliest_period, max(s.last_period) AS latest_period, count(s) AS series_count
+
+  # ── Trends (arrays on the Series node) ────────────────────────────────────
+  - q: UAE GDP growth trend
+    cypher: |
+      MATCH (s:Series)-[:FOR_COUNTRY]->(c:Country {code: 'ARE'})
+      WHERE s.measure = 'gdp_real_growth' AND s.table = 'gold.gold_imf_weo' AND s.has_points = true
+      UNWIND range(0, size(s.periods) - 1) AS i
+      RETURN s.periods[i] AS period, s.values[i] AS gdp_growth_pct, s.table AS source_table
+      ORDER BY period
+  - q: UAE inflation history since 2015
+    cypher: |
+      MATCH (s:Series)-[:FOR_COUNTRY]->(c:Country {code: 'ARE'})
+      WHERE s.measure = 'cpi_yoy' AND s.table = 'gold.gold_imf_weo' AND s.has_points = true
+      UNWIND range(0, size(s.periods) - 1) AS i
+      WITH s.periods[i] AS period, s.values[i] AS inflation_pct, s.table AS source_table
+      WHERE substring(period, 0, 4) >= '2015'
+      RETURN period, inflation_pct, source_table
+      ORDER BY period
+  - q: US inflation trend for the last 5 years
+    cypher: |
+      MATCH (s:Series)-[:FOR_COUNTRY]->(c:Country {code: 'USA'})
+      WHERE s.measure = 'cpi_yoy' AND s.table = 'gold.gold_imf_weo' AND s.has_points = true
+      UNWIND range(0, size(s.periods) - 1) AS i
+      WITH s.periods[i] AS period, s.values[i] AS inflation_pct, s.table AS source_table
+      WHERE substring(period, 0, 4) >= toString(date().year - 5) AND substring(period, 0, 4) <= toString(date().year)
+      RETURN period, inflation_pct, source_table
+      ORDER BY period
+  - q: IMF projections for UAE growth over the next 3 years
+    cypher: |
+      MATCH (s:Series)-[:FOR_COUNTRY]->(c:Country {code: 'ARE'})
+      WHERE s.measure = 'gdp_real_growth' AND s.table = 'gold.gold_imf_weo' AND s.has_points = true
+      UNWIND range(0, size(s.periods) - 1) AS i
+      WITH s.periods[i] AS period, s.values[i] AS gdp_growth_pct, s.table AS source_table
+      WHERE substring(period, 0, 4) > toString(date().year) AND substring(period, 0, 4) <= toString(date().year + 3)
+      RETURN period, gdp_growth_pct, source_table
+      ORDER BY period
+  - q: Brent price over the last decade
+    cypher: |
+      MATCH (s:Series)
+      WHERE s.measure = 'oil_brent_spot' AND s.has_points = true
+      UNWIND range(0, size(s.periods) - 1) AS i
+      WITH s.periods[i] AS period, s.values[i] AS brent_usd_bbl, s.table AS source_table
+      WHERE substring(period, 0, 4) >= toString(date().year - 10)
+      RETURN period, brent_usd_bbl, source_table
+      ORDER BY period
+  - q: US unemployment year by year
+    cypher: |
+      MATCH (s:Series)-[:FOR_COUNTRY]->(c:Country {code: 'USA'})
+      WHERE s.measure = 'unemployment_rate' AND s.has_points = true
+      UNWIND range(0, size(s.periods) - 1) AS i
+      RETURN substring(s.periods[i], 0, 4) AS year, s.values[i] AS unemployment_pct, s.table AS source_table
+      ORDER BY year
+  - q: Compare GDP growth trend of UAE and Saudi Arabia
+    cypher: |
+      MATCH (s:Series)-[:FOR_COUNTRY]->(c:Country)
+      WHERE s.measure = 'gdp_real_growth' AND s.table = 'gold.gold_imf_weo' AND c.code IN ['ARE', 'SAU'] AND s.has_points = true
+      UNWIND range(0, size(s.periods) - 1) AS i
+      RETURN s.periods[i] AS period, c.code AS country, s.values[i] AS gdp_growth_pct
+      ORDER BY period, country
+  - q: UAE policy rate monthly history
+    cypher: |
+      MATCH (s:Series)-[:FOR_COUNTRY]->(c:Country {code: 'ARE'})
+      WHERE s.measure = 'policy_rate' AND s.table = 'gold.gold_bis_cbpol' AND s.has_points = true
+      UNWIND range(0, size(s.periods) - 1) AS i
+      RETURN s.periods[i] AS period, s.values[i] AS policy_rate_pct
+      ORDER BY period
+  - q: Total revenue trend for Dubai
+    cypher: |
+      MATCH (s:Series)
+      WHERE s.table = 'gold.de_fiscal_history' AND s.series_group = 'Total revenue' AND s.has_points = true
+      UNWIND range(0, size(s.periods) - 1) AS i
+      RETURN s.periods[i] AS period, s.values[i] AS revenue_aed_m, s.measure AS measure
+      ORDER BY period
+  - q: Revenue versus expenditure by year
+    cypher: |
+      MATCH (s:Series)
+      WHERE s.table = 'gold.de_fiscal_history' AND s.has_points = true
+      UNWIND range(0, size(s.periods) - 1) AS i
+      RETURN substring(s.periods[i], 0, 4) AS year, s.series_group AS series, s.values[i] AS aed_m
+      ORDER BY year, series
+  - q: Government debt to GDP for the UAE, 2020 to 2025
+    cypher: |
+      MATCH (s:Series)-[:FOR_COUNTRY]->(c:Country {code: 'ARE'})
+      WHERE s.measure = 'gov_debt_pct_gdp' AND s.has_points = true
+      UNWIND range(0, size(s.periods) - 1) AS i
+      WITH s.periods[i] AS period, s.values[i] AS debt_pct_gdp, s.table AS source_table
+      WHERE substring(period, 0, 4) >= '2020' AND substring(period, 0, 4) <= '2025'
+      RETURN period, debt_pct_gdp, source_table
+      ORDER BY period
+  - q: Which series have their full history in the graph?
+    cypher: |
+      MATCH (s:Series)
+      WHERE s.has_points = true
+      RETURN s.table AS source_table, count(s) AS series_with_points, max(s.n_points) AS max_points
+      ORDER BY source_table
+
+  # ── United States ─────────────────────────────────────────────────────────
+  - q: What is the current US policy rate?
+    cypher: |
+      MATCH (s:Series)-[:FOR_COUNTRY]->(c:Country {code: 'USA'})
+      WHERE s.measure = 'policy_rate'
+      RETURN s.latest_value AS policy_rate_pct, s.last_period AS period, s.table AS source_table
+      ORDER BY period DESC LIMIT 5
+  - q: US 10-year treasury yield latest and range
+    cypher: |
+      MATCH (s:Series)-[:FOR_COUNTRY]->(c:Country {code: 'USA'})
+      WHERE s.measure = 'bond_yield_10y'
+      RETURN s.latest_value AS yield_pct, s.last_period AS period, s.min_value AS min_pct, s.max_value AS max_pct, s.mean_value AS mean_pct, s.table AS source_table
+  - q: US dollar index now
+    cypher: |
+      MATCH (s:Series)-[:FOR_COUNTRY]->(c:Country {code: 'USA'})
+      WHERE s.measure = 'fx_usd_index'
+      RETURN s.latest_value AS dollar_index, s.last_period AS period, s.table AS source_table
+  - q: US inflation monthly
+    cypher: |
+      MATCH (s:Series)-[:FOR_COUNTRY]->(c:Country {code: 'USA'})
+      WHERE s.measure = 'cpi_monthly_yoy'
+      RETURN s.latest_value AS inflation_pct, s.last_period AS period, s.first_period AS since, s.table AS source_table
+  - q: US GDP growth, inflation and unemployment from the IMF
+    cypher: |
+      MATCH (s:Series)-[:FOR_COUNTRY]->(c:Country {code: 'USA'})
+      WHERE s.table = 'gold.gold_imf_weo' AND s.measure IN ['gdp_real_growth', 'cpi_yoy', 'unemployment_rate']
+      RETURN s.measure AS indicator, s.latest_value AS latest, s.last_period AS period
+      ORDER BY indicator
+  - q: Everything we track for the United States
+    cypher: |
+      MATCH (s:Series)-[:FOR_COUNTRY]->(c:Country {code: 'USA'})
+      RETURN s.measure AS indicator, s.table AS source_table, s.latest_value AS latest, s.last_period AS period
+      ORDER BY source_table, indicator LIMIT 100
+  - q: Fed rate versus UAE rate
+    cypher: |
+      MATCH (s:Series)-[:FOR_COUNTRY]->(c:Country)
+      WHERE s.measure = 'policy_rate' AND c.code IN ['USA', 'ARE']
+      RETURN c.code AS country, s.latest_value AS policy_rate_pct, s.last_period AS period, s.table AS source_table
+      ORDER BY country
+
+  # ── Comparisons and oil ───────────────────────────────────────────────────
+  - q: Compare GDP growth for UAE, Saudi Arabia and the US
+    cypher: |
+      MATCH (s:Series)-[:FOR_COUNTRY]->(c:Country)
+      WHERE s.measure = 'gdp_real_growth' AND c.code IN ['ARE', 'SAU', 'USA'] AND s.table = 'gold.gold_imf_weo'
+      RETURN c.code AS country, s.latest_value AS gdp_growth_pct, s.last_period AS period
+      ORDER BY gdp_growth_pct DESC
+  - q: GDP growth of Dubai's trading partners
+    cypher: |
+      MATCH (s:Series)-[:FOR_COUNTRY]->(c:Country)
+      WHERE s.measure = 'gdp_real_growth' AND c.code IN ['IND', 'CHN', 'SAU', 'USA', 'GBR'] AND s.table = 'gold.gold_imf_weo'
+      RETURN c.code AS partner, s.latest_value AS gdp_growth_pct, s.last_period AS period
+      ORDER BY partner
+  - q: Advanced versus emerging economies growth
+    cypher: |
+      MATCH (s:Series)-[:FOR_COUNTRY]->(c:Country)
+      WHERE s.measure = 'gdp_real_growth' AND c.code IN ['ADVANCED', 'EMERGING', 'DEVELOPING']
+      RETURN c.code AS group_code, s.latest_value AS gdp_growth_pct, s.last_period AS period, s.table AS source_table
+      ORDER BY group_code
+  - q: Which countries are in the graph?
+    cypher: |
+      MATCH (c:Country)<-[:FOR_COUNTRY]-(s:Series)
+      RETURN c.code AS country, count(s) AS series_count
+      ORDER BY series_count DESC LIMIT 250
+  - q: Inflation across all countries, highest first
+    cypher: |
+      MATCH (s:Series)-[:FOR_COUNTRY]->(c:Country)
+      WHERE s.measure = 'cpi_yoy'
+      RETURN c.code AS country, s.latest_value AS inflation_pct, s.last_period AS period, s.table AS source_table
+      ORDER BY inflation_pct DESC LIMIT 50
+  - q: Brent oil price latest and range
+    cypher: |
+      MATCH (s:Series)
+      WHERE s.measure = 'oil_brent_spot'
+      RETURN s.latest_value AS brent_usd_bbl, s.last_period AS period, s.min_value AS min_usd, s.max_value AS max_usd, s.table AS source_table
+      LIMIT 5
+  - q: Oil price forecast from EIA
+    cypher: |
+      MATCH (s:Series)
+      WHERE s.table = 'gold.gold_eia' AND s.measure IN ['oil_brent_forecast', 'oil_wti_forecast']
+      RETURN s.measure AS indicator, s.latest_value AS usd_bbl, s.last_period AS horizon, s.first_period AS from_period
+      ORDER BY indicator
+  - q: How many countries have IMF data?
+    cypher: |
+      MATCH (s:Series)-[:FOR_COUNTRY]->(c:Country)
+      WHERE s.table = 'gold.gold_imf_weo'
+      RETURN count(DISTINCT c.code) AS country_count
+  - q: Latest GDP growth with its unit
+    cypher: |
+      MATCH (s:Series)-[:FOR_COUNTRY]->(c:Country {code: 'ARE'}), (k:Kpi)
+      WHERE s.measure = 'gdp_real_growth' AND k.code = s.measure
+      RETURN s.latest_value AS value, k.unit AS unit, k.name AS indicator, s.last_period AS period, s.table AS source_table
+      LIMIT 5
+
+  # ── Dubai fiscal ──────────────────────────────────────────────────────────
+  - q: Total revenue and total expenditure history
+    cypher: |
+      MATCH (s:Series)
+      WHERE s.table = 'gold.de_fiscal_history'
+      RETURN s.series_group AS series, s.measure AS measure, s.first_period AS first_period, s.last_period AS last_period, s.latest_value AS latest_aed_m, s.mean_value AS mean_aed_m
+      ORDER BY series
+  - q: Revenue by entity, budget versus actual
+    cypher: |
+      MATCH (s:Series)
+      WHERE s.table = 'gold.de_revenue_entity'
+      RETURN s.entity_code AS entity, s.measure AS measure, s.latest_value AS latest_aed_m, s.last_period AS period
+      ORDER BY entity, measure LIMIT 100
+  - q: Expenditure by entity, recurrent and capital
+    cypher: |
+      MATCH (s:Series)
+      WHERE s.table = 'gold.de_expenditure_entity'
+      RETURN s.entity_code AS entity, s.measure AS measure, s.latest_value AS latest_aed_m, s.last_period AS period
+      ORDER BY entity, measure LIMIT 100
+  - q: Spending on health and education
+    cypher: |
+      MATCH (s:Series)
+      WHERE s.table = 'gold.de_cofog' AND s.cofog_code IN ['07', '09']
+      RETURN s.cofog_code AS cofog, s.measure AS measure, s.latest_value AS latest_aed_m, s.last_period AS period
+      ORDER BY cofog
+  - q: Revenue accounts — fees and VAT share
+    cypher: |
+      MATCH (s:Series)
+      WHERE s.table = 'gold.de_revenue_account'
+      RETURN s.account_code AS account, s.measure AS measure, s.latest_value AS latest_aed_m, s.last_period AS period
+      ORDER BY account, measure
+  - q: Dubai GDP by sector
+    cypher: |
+      MATCH (s:Series)
+      WHERE s.table = 'gold.de_gdp_sector'
+      RETURN s.sector_code AS sector, s.measure AS measure, s.latest_value AS latest, s.last_period AS period
+      ORDER BY sector, measure LIMIT 100
+  - q: Which Dubai fiscal series do we have?
+    cypher: |
+      MATCH (s:Series)
+      WHERE s.table STARTS WITH 'gold.de_'
+      RETURN s.table AS source_table, count(s) AS series_count, min(s.first_period) AS first_period, max(s.last_period) AS last_period
+      ORDER BY source_table
+  - q: Dubai macro baseline used by the engine
+    cypher: |
+      MATCH (s:Series)
+      WHERE s.table = 'gold.de_macro_baseline'
+      RETURN s.measure AS indicator, s.latest_value AS latest, s.first_period AS from_period, s.last_period AS to_period
+      ORDER BY indicator
+  - q: Scenario lines under baseline and downside
+    cypher: |
+      MATCH (s:Series)
+      WHERE s.table = 'gold.de_scenario_line'
+      RETURN s.measure AS measure, s.latest_value AS latest_aed_m, s.last_period AS horizon, s.n_points AS points
+      ORDER BY measure LIMIT 100
+
+  # ── Observations ──────────────────────────────────────────────────────────
+  - q: Latest inflation observation for the UAE
+    cypher: |
+      MATCH (o:KpiObservation)-[:FOR_KPI]->(k:Kpi {code: 'cpi_yoy'}), (o)-[:FOR_COUNTRY]->(c:Country {code: 'ARE'})
+      WHERE o.period IS NOT NULL
+      RETURN o.value AS inflation_pct, o.period AS period, o.source_code AS source, o.retrieved_at AS retrieved_at
+      ORDER BY period DESC LIMIT 1
+  - q: US observations recorded this year
+    cypher: |
+      MATCH (o:KpiObservation)-[:FOR_KPI]->(k:Kpi), (o)-[:FOR_COUNTRY]->(c:Country {code: 'USA'})
+      WHERE o.period IS NOT NULL AND o.period.year = date().year
+      RETURN k.code AS indicator, o.period AS period, o.value AS value, o.source_code AS source
+      ORDER BY period DESC LIMIT 100
+  - q: GDP growth observations for the UAE by year
+    cypher: |
+      MATCH (o:KpiObservation)-[:FOR_KPI]->(k:Kpi {code: 'gdp_real_growth'}), (o)-[:FOR_COUNTRY]->(c:Country {code: 'ARE'})
+      WHERE o.period IS NOT NULL
+      RETURN o.period.year AS year, o.value AS gdp_growth_pct, o.source_code AS source
+      ORDER BY year LIMIT 100
+  - q: Observations below 0.8 confidence not yet validated
+    cypher: |
+      MATCH (o:KpiObservation)-[:FOR_KPI]->(k:Kpi)
+      WHERE o.confidence < 0.8 AND o.validated = false
+      RETURN k.code AS indicator, o.geo AS country, o.period AS period, o.value AS value, o.confidence AS confidence, o.source_code AS source
+      ORDER BY confidence LIMIT 100
+  - q: Which values were revised and by how much?
+    cypher: |
+      MATCH (r:KpiObservationRevision)-[:FOR_KPI]->(k:Kpi)
+      RETURN k.code AS indicator, r.geo AS country, r.period AS period, r.old_value AS old_value, r.new_value AS new_value, r.source_code AS source, r.revised_at AS revised_at
+      ORDER BY revised_at DESC LIMIT 100
+
+  # ── Sources and pipeline ──────────────────────────────────────────────────
+  - q: Which sources publish inflation for Saudi Arabia?
+    cypher: |
+      MATCH (o:KpiObservation)-[:FOR_KPI]->(k:Kpi), (o)-[:FOR_COUNTRY]->(c:Country {code: 'SAU'}), (o)-[:FOR_SOURCE]->(src:Source)
+      WHERE k.code IN ['cpi_yoy', 'cpi_monthly_yoy']
+      RETURN DISTINCT src.code AS source, k.code AS indicator, src.tier AS tier
+  - q: List all data sources and their status
+    cypher: |
+      MATCH (src:Source)
+      RETURN src.code AS source, src.name AS name, src.kind AS kind, src.tier AS tier, src.enabled AS enabled, src.last_status AS last_status, src.last_fetched_at AS last_fetched
+      ORDER BY source
+  - q: Which data sources are overdue or failed?
+    cypher: |
+      MATCH (i:IngestRun)-[:FOR_SOURCE]->(src:Source)
+      WHERE i.status <> 'SUCCESS'
+      RETURN src.code AS source, i.status AS status, i.started_at AS started, i.rows_fetched AS rows_fetched
+      ORDER BY started DESC LIMIT 50
+  - q: Last ingest run per source
+    cypher: |
+      MATCH (i:IngestRun)-[:FOR_SOURCE]->(src:Source)
+      WITH src, i ORDER BY i.finished_at DESC
+      WITH src, collect(i)[0] AS last
+      RETURN src.code AS source, last.status AS status, last.finished_at AS finished, last.rows_inserted AS inserted, last.rows_updated AS updated, last.rows_revised AS revised
+      ORDER BY source
+  - q: Which datasets cover the UAE?
+    cypher: |
+      MATCH (d:Dataset)-[:FOR_SOURCE]->(src:Source)
+      RETURN d.table_name AS table_name, src.code AS source, d.kpi_codes AS kpi_codes, d.period_min AS period_min, d.period_max AS period_max, d.row_count AS rows, d.geo_count AS countries
+      ORDER BY table_name LIMIT 100
+  - q: Documents fetched from DSC
+    cypher: |
+      MATCH (d:Document)-[:FOR_SOURCE]->(src:Source {code: 'DSC'})
+      RETURN d.title AS title, d.kind AS kind, d.parse_status AS parse_status, d.rows AS rows, d.retrieved_at AS retrieved_at
+      ORDER BY retrieved_at DESC LIMIT 50
+  - q: What does each KPI mean and in what unit?
+    cypher: |
+      MATCH (k:Kpi)
+      RETURN k.code AS code, k.name AS name, k.unit AS unit, k.frequency AS frequency, k.category AS category
+      ORDER BY code LIMIT 100
+
+  # ── Scenarios, drivers, engine ────────────────────────────────────────────
+  - q: Which drivers can the scenario builder move?
+    cypher: |
+      MATCH (d:DeScenarioDriver)
+      RETURN d.code AS driver, d.label AS label, d.group_name AS group_name, d.unit AS unit, d.min_val AS min_val, d.max_val AS max_val, d.step_val AS step_val
+      ORDER BY d.sort_order LIMIT 100
+  - q: Driver values under the downside scenario
+    cypher: |
+      MATCH (v:DeScenarioDriverValue)-[:FOR_CODE]->(d:DeScenarioDriver)
+      WHERE v.scenario = 'downside'
+      RETURN d.code AS driver, d.label AS label, v.value AS value, d.unit AS unit
+      ORDER BY driver LIMIT 100
+  - q: Compare driver values baseline versus downside
+    cypher: |
+      MATCH (v:DeScenarioDriverValue)-[:FOR_CODE]->(d:DeScenarioDriver)
+      WHERE v.scenario IN ['baseline', 'downside']
+      RETURN d.code AS driver, v.scenario AS scenario, v.value AS value, d.unit AS unit
+      ORDER BY driver, scenario LIMIT 200
+  - q: How sensitive is each fiscal line to its drivers?
+    cypher: |
+      MATCH (e:DeScenarioElasticity)-[:FOR_DRIVER]->(d:DeScenarioDriver)
+      RETURN e.line_name AS line, d.code AS driver, e.elasticity AS elasticity
+      ORDER BY line, driver LIMIT 100
+  - q: Policy measures available
+    cypher: |
+      MATCH (m:DeMeasure)
+      RETURN m.measure_id AS id, m.short_name AS measure, m.family AS family, m.sector AS sector, m.rate AS rate, m.start_year AS start_year, m.default_on AS default_on
+      ORDER BY id LIMIT 100
+  - q: Latest scenario engine runs
+    cypher: |
+      MATCH (r:ScenarioEngineRun)
+      RETURN r.id AS run_id, r.preset_id AS preset, r.focus_year AS focus_year, r.feedback_on AS feedback_on, r.created_by AS created_by, r.created_at AS created_at
+      ORDER BY created_at DESC LIMIT 20
+  - q: Backtest results
+    cypher: |
+      MATCH (b:BacktestRun)
+      RETURN b.id AS run_id, b.target_id AS target, b.variant_id AS variant, b.metrics AS metrics, b.as_of_vintages AS as_of_vintages, b.created_at AS created_at
+      ORDER BY created_at DESC LIMIT 20
+  - q: Which engine configurations are current?
+    cypher: |
+      MATCH (c:ScenarioEngineConfig)
+      WHERE c.is_current = true
+      RETURN c.id AS config_id, c.version AS version, c.environment_id AS environment, c.built_at AS built_at
+
+  # ── BSP cycle ─────────────────────────────────────────────────────────────
+  - q: BSP stages and their owners
+    cypher: |
+      MATCH (st:BspStage)-[:FOR_CYCLE]->(cy:BspCycle)
+      RETURN cy.name AS cycle, st.number AS stage, st.milestone AS milestone, st.owner AS owner, st.due_at AS due, st.status AS status
+      ORDER BY cycle, stage
+  - q: Overdue BSP stages
+    cypher: |
+      MATCH (st:BspStage)-[:FOR_CYCLE]->(cy:BspCycle)
+      WHERE st.due_at < datetime() AND st.status <> 'done'
+      RETURN cy.name AS cycle, st.number AS stage, st.milestone AS milestone, st.owner AS owner, st.due_at AS due
+      ORDER BY due
+
+  # ── Arabic ────────────────────────────────────────────────────────────────
+  - q: اتجاه نمو الناتج المحلي في الإمارات عبر السنوات
+    cypher: |
+      MATCH (s:Series)-[:FOR_COUNTRY]->(c:Country {code: 'ARE'})
+      WHERE s.measure = 'gdp_real_growth' AND s.table = 'gold.gold_imf_weo' AND s.has_points = true
+      UNWIND range(0, size(s.periods) - 1) AS i
+      RETURN s.periods[i] AS period, s.values[i] AS gdp_growth_pct
+      ORDER BY period
+  - q: ما هو آخر معدل تضخم في الإمارات؟
+    cypher: |
+      MATCH (s:Series)-[:FOR_COUNTRY]->(c:Country {code: 'ARE'})
+      WHERE s.measure IN ['cpi_yoy', 'cpi_monthly_yoy']
+      RETURN s.measure AS indicator, s.latest_value AS inflation_pct, s.last_period AS period, s.table AS source_table
+      ORDER BY period DESC LIMIT 5
+  - q: نمو الناتج المحلي في الإمارات
+    cypher: |
+      MATCH (s:Series)-[:FOR_COUNTRY]->(c:Country {code: 'ARE'})
+      WHERE s.measure = 'gdp_real_growth'
+      RETURN s.latest_value AS gdp_growth_pct, s.last_period AS period, s.table AS source_table
+      ORDER BY period DESC LIMIT 5
+  - q: سعر الفائدة الأمريكي الحالي
+    cypher: |
+      MATCH (s:Series)-[:FOR_COUNTRY]->(c:Country {code: 'USA'})
+      WHERE s.measure = 'policy_rate'
+      RETURN s.latest_value AS policy_rate_pct, s.last_period AS period, s.table AS source_table
+      LIMIT 5
+  - q: إيرادات الجهات الحكومية في دبي
+    cypher: |
+      MATCH (s:Series)
+      WHERE s.table = 'gold.de_revenue_entity'
+      RETURN s.entity_code AS entity, s.measure AS measure, s.latest_value AS latest_aed_m, s.last_period AS period
+      ORDER BY entity LIMIT 100
+  - q: آخر سعر لخام برنت
+    cypher: |
+      MATCH (s:Series)
+      WHERE s.measure = 'oil_brent_spot'
+      RETURN s.latest_value AS brent_usd_bbl, s.last_period AS period, s.table AS source_table
+      LIMIT 5

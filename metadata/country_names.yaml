@@ -1,0 +1,219 @@
+# IMF country abbreviations (Fiscal Monitor, April 2018) plus IMF groups/regions used in WEO. Code → name for the Cypher prompt.
+ABW: Aruba
+ADVANCED: Advanced economies (IMF group)
+AFG: Afghanistan
+AFQ: Africa (IMF region)
+AGO: Angola
+ALB: Albania
+AND: Andorra
+ARE: United Arab Emirates
+ARG: Argentina
+ARM: Armenia
+AS5: ASEAN-5 (IMF group)
+ATG: Antigua and Barbuda
+AUS: Australia
+AUT: Austria
+AZE: Azerbaijan
+BDI: Burundi
+BEL: Belgium
+BEN: Benin
+BFA: Burkina Faso
+BGD: Bangladesh
+BGR: Bulgaria
+BHR: Bahrain
+BHS: Bahamas, The
+BIH: Bosnia and Herzegovina
+BLR: Belarus
+BLZ: Belize
+BOL: Bolivia
+BRA: Brazil
+BRB: Barbados
+BRN: Brunei Darussalam
+BTN: Bhutan
+BWA: Botswana
+CAF: Central African Republic
+CAN: Canada
+CAQ: Central Asia and Caucasus (IMF region)
+CBQ: Caribbean (IMF region)
+CHE: Switzerland
+CHL: Chile
+CHN: China
+CIV: Côte d’Ivoire
+CMQ: Central America (IMF region)
+CMR: Cameroon
+COD: Congo, Democratic Republic of the
+COG: Congo, Republic of
+COL: Colombia
+COM: Comoros
+CPV: Cabo Verde
+CRI: Costa Rica
+CYP: Cyprus
+CZE: Czech Republic
+DEU: Germany
+DEVELOPING: Emerging market and developing economies (IMF group)
+DJI: Djibouti
+DMA: Dominica
+DNK: Denmark
+DOM: Dominican Republic
+DZA: Algeria
+EAQ: East Asia (IMF region)
+ECU: Ecuador
+EEQ: Emerging and developing Europe (IMF region)
+EGY: Egypt
+EMERGING: Emerging market economies (IMF group)
+ERI: Eritrea
+ESP: Spain
+EST: Estonia
+ETH: Ethiopia
+FIN: Finland
+FJI: Fiji
+FRA: France
+FSM: Micronesia, Federated States of
+GAB: Gabon
+GBR: United Kingdom
+GEO: Georgia
+GHA: Ghana
+GIN: Guinea
+GMB: Gambia, The
+GNB: Guinea-Bissau
+GNQ: Equatorial Guinea
+GRC: Greece
+GRD: Grenada
+GTM: Guatemala
+GUY: Guyana
+HKG: Hong Kong
+HRV: Croatia
+HTI: Haiti
+HUN: Hungary
+IDN: Indonesia
+IND: India
+IRL: Ireland
+IRN: Iran
+IRQ: Iraq
+ISL: Iceland
+ISR: Israel
+ITA: Italy
+JAM: Jamaica
+JOR: Jordan
+JPN: Japan
+KAZ: Kazakhstan
+KEN: Kenya
+KGZ: Kyrgyz Republic
+KHM: Cambodia
+KIR: Kiribati
+KNA: St. Kitts and Nevis
+KOR: Korea
+KWT: Kuwait
+LAO: Lao P.D.R.
+LBN: Lebanon
+LBR: Liberia
+LBY: Libya
+LCA: St. Lucia
+LIE: Liechtenstein
+LKA: Sri Lanka
+LSO: Lesotho
+LTU: Lithuania
+LUX: Luxembourg
+LVA: Latvia
+MAC: Macao SAR
+MAE: Middle East (IMF group)
+MAR: Morocco
+MDA: Moldova
+MDG: Madagascar
+MDV: Maldives
+MEX: Mexico
+MHL: Marshall Islands
+MKD: North Macedonia
+MLI: Mali
+MLT: Malta
+MMR: Myanmar
+MNE: Montenegro
+MNG: Mongolia
+MOZ: Mozambique
+MRT: Mauritania
+MUS: Mauritius
+MWI: Malawi
+MYS: Malaysia
+NAM: Namibia
+NAQ: North Africa (IMF region)
+NER: Niger
+NGA: Nigeria
+NIC: Nicaragua
+NLD: Netherlands, The
+NMQ: North America (IMF region)
+NOR: Norway
+NPL: Nepal
+NRU: Nauru
+NZL: New Zealand
+OAE: Other advanced economies (IMF group)
+OMN: Oman
+PAK: Pakistan
+PAN: Panama
+PER: Peru
+PHL: Philippines
+PIQ: Pacific Islands (IMF region)
+PLW: Palau
+PNG: Papua New Guinea
+POL: Poland
+PRI: Puerto Rico
+PRT: Portugal
+PRY: Paraguay
+QAT: Qatar
+ROU: Romania
+RUS: Russia
+RWA: Rwanda
+SAQ: South Asia (IMF region)
+SAR: HND Honduras
+SAU: Saudi Arabia
+SDN: Sudan
+SEN: Senegal
+SEQ: South-East Asia (IMF region)
+SGP: Singapore
+SLB: Solomon Islands
+SLE: Sierra Leone
+SLV: El Salvador
+SMQ: South America (IMF region)
+SMR: San Marino
+SOM: Somalia
+SRB: Serbia
+SSD: South Sudan
+SSQ: Sub-Saharan Africa (IMF region)
+STP: São Tomé and Príncipe
+SUR: Suriname
+SVK: Slovak Republic
+SVN: Slovenia
+SWE: Sweden
+SWZ: Eswatini
+SYC: Seychelles
+SYR: Syria
+TCD: Chad
+TGO: Togo
+THA: Thailand
+TJK: Tajikistan
+TKM: Turkmenistan
+TLS: Timor-Leste
+TON: Tonga
+TTO: Trinidad and Tobago
+TUN: Tunisia
+TUR: Türkiye
+TUV: Tuvalu
+TWN: Taiwan Province of China
+TZA: Tanzania
+UGA: Uganda
+UKR: Ukraine
+URY: Uruguay
+USA: United States
+UVK: Kosovo
+UZB: Uzbekistan
+VCT: St. Vincent and the Grenadines
+VEN: Venezuela
+VNM: Vietnam
+VUT: Vanuatu
+WBG: West Bank and Gaza
+WEQ: Western Europe (IMF region)
+WLD: World
+WSM: Samoa
+YEM: Yemen
+ZAF: South Africa
+ZMB: Zambia
+ZWE: Zimbabwe

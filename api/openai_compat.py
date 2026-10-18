@@ -47,6 +47,7 @@ CHART-DETECTION REWRITE (this version):
       keep the original 20.
 """
 import json
+import re
 import time
 import uuid
 import logging
@@ -107,8 +108,19 @@ async def _generate_title(question: str, model: str) -> str:
 
 # ── Chart detection ───────────────────────────────────────────────────────────
 
+# columns that are never a measure and never a category label
 _TIME_KEYS = {"year", "month", "quarter", "year_month", "yearmonth", "period",
-              "date", "week", "day"}
+              "date", "week", "day", "first_period", "last_period"}
+# range columns on Series summary nodes: excluded from labels, but not an x-axis
+_RANGE_KEYS = {"first_period", "last_period"}
+
+# ratio / rate columns are never money, even if the name contains "revenue" or "debt"
+_RATIO_HINTS = ("pct", "percent", "share", "ratio", "rate", "growth", "yoy",
+                "index", "score", "_gdp")
+
+# currency prefix for monetary y columns. DoF series are AED (Dubai) or USD (US)
+# and the unit is stated in the answer text, so the chart shows no symbol by default.
+_CURRENCY_PREFIX = ""
 
 _MONEY_HINTS = ("amount", "charged", "charge", "paid", "payment", "payments",
                 "balance", "outstanding", "debt", "revenue", "cost", "adjust",
@@ -125,6 +137,8 @@ _MAX_SERIES = 8        # cap category breakdown lines
 
 def _is_money_key(key: str) -> bool:
     k = (key or "").lower()
+    if any(h in k for h in _RATIO_HINTS):
+        return False
     return any(h in k for h in _MONEY_HINTS)
 
 
@@ -144,8 +158,20 @@ def _time_label(row: dict, time_keys: list) -> str:
             return f"{y}-{m}"
     if "year" in lk and "quarter" in lk:
         return f"{row.get(lk['year'])}-Q{row.get(lk['quarter'])}"
-    # single time column (year, year_month, date, ...)
-    return str(row.get(time_keys[0], ""))
+    # single time column (year, year_month, date, period "YYYY-MM-DD", ...)
+    v = str(row.get(time_keys[0], ""))
+    if re.fullmatch(r"\d{4}-\d{2}-01", v):     # graph periods are first-of-month dates
+        v = v[:7]
+    return v
+
+
+def _compact_periods(data: list) -> list:
+    """Annual series arrive as YYYY-01 after _time_label; show them as YYYY."""
+    periods = [str(r.get("period", "")) for r in data]
+    if periods and all(re.fullmatch(r"\d{4}-01", x) for x in periods):
+        for r in data:
+            r["period"] = r["period"][:4]
+    return data
 
 
 def _pivot_series(results: list, time_keys: list, series_key: str,
@@ -189,7 +215,7 @@ def detect_chart(question: str, results: list) -> dict | None:
     first = results[0]
     keys = list(first.keys())
 
-    time_keys = [k for k in keys if k.lower() in _TIME_KEYS]
+    time_keys = [k for k in keys if k.lower() in _TIME_KEYS - _RANGE_KEYS]
     numeric_keys = [k for k in keys if _is_numeric(first.get(k))]
     string_keys = [k for k in keys if isinstance(first.get(k), str)]
 
@@ -226,13 +252,20 @@ def detect_chart(question: str, results: list) -> dict | None:
 
     # ── Case 1: time series ───────────────────────────────────────────────
     if time_keys and chart_type == "line":
-        # a leftover string column (e.g. state) = category → multi-series
-        series_key = string_keys[0] if string_keys else None
+        # a leftover NON-time string column (e.g. source_table, country) = category → multi-series.
+        # `period` is a string in the DoF graph, so it must be excluded here or every
+        # period becomes its own one-point series.
+        series_key = next((k for k in string_keys if k.lower() not in _TIME_KEYS), None)
 
         if series_key:
             data, series = _pivot_series(results, time_keys, series_key, y_key)
             if len(data) < 2 or not series:
                 return None
+            if len(series) == 1:          # one category only → plain single-series chart
+                series_key = None
+            else:
+                data = _compact_periods(data)
+        if series_key:
             logger.info(
                 f"detect_chart: multi-series line — x=period, y={y_key!r}, "
                 f"series={series_key!r} ({len(series)}), points={len(data)}"
@@ -251,6 +284,7 @@ def detect_chart(question: str, results: list) -> dict | None:
             except (TypeError, ValueError):
                 val = 0.0
             data.append({"period": _time_label(r, time_keys), y_key: val})
+        data = _compact_periods(data)
         if len({row["period"] for row in data}) < 2:
             return None
         logger.info(f"detect_chart: line — x=period, y={y_key!r}, points={len(data)}")
@@ -260,7 +294,7 @@ def detect_chart(question: str, results: list) -> dict | None:
         }
 
     # ── Case 2: categorical (bar / pie) ───────────────────────────────────
-    label_key = string_keys[0] if string_keys else None
+    label_key = next((k for k in string_keys if k.lower() not in _TIME_KEYS), None)
     if label_key is None:
         # numeric label (e.g. plain year column with no trend wording)
         label_candidates = [k for k in numeric_keys if k != y_key]
@@ -478,7 +512,7 @@ const formatValue = (v) => {
   if (Math.abs(n) >= 1_000_000) out = (n / 1_000_000).toFixed(1) + 'M';
   else if (Math.abs(n) >= 1_000) out = (n / 1_000).toFixed(1) + 'K';
   else out = n.toLocaleString();
-  return IS_MONEY ? '$' + out : out;
+  return IS_MONEY ? '__CUR__' + out : out;
 };
 const formatMonth = (val) => {
   if (!val || !String(val).includes('-')) return val;
@@ -487,7 +521,7 @@ const formatMonth = (val) => {
   return (months[parseInt(m, 10) - 1] || m) + ' ' + y;
 };
 const isMonthLabel = (val) => val && String(val).match(/^\\d{4}-\\d{2}$/);
-""".replace("__IS_MONEY__", "true" if is_money else "false")
+""".replace("__IS_MONEY__", "true" if is_money else "false").replace("__CUR__", _CURRENCY_PREFIX)
 
     COLORS_JS = "const COLORS = ['#63b3ed','#68d391','#f6ad55','#fc8181','#b794f4','#76e4f7','#fbb6ce','#90cdf4'];"
 
