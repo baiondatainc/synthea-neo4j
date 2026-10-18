@@ -183,7 +183,7 @@ node_labels:
     - <-[:HAS_PRODUCT]-(:Policy)
     - <-[:FOR_PRODUCT]-(:Claim)
   IAProduct:
-    description: Product in the Insurance Authority catalogue.
+    description: Product in the Department of Finance catalogue.
     key: insurance_authority_product_id
     properties:
       insurance_authority_product_id: String

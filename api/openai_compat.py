@@ -131,6 +131,8 @@ _MEASURE_HINTS = _MONEY_HINTS + ("count", "total", "sum", "avg", "average",
                                  "calls", "reviews", "transactions", "rating")
 
 _LINE_POINT_CAP = 60   # multi-year monthly trends need > 20 points
+_BAR_OVERLAY_MAX = 36  # trend charts get bars under the line up to this many points
+_LABEL_MAX = 24        # and a value label per bar up to this many (points × series)
 _BAR_POINT_CAP = 20
 _MAX_SERIES = 8        # cap category breakdown lines
 
@@ -576,11 +578,18 @@ export default function Chart() {{
 }}"""
 
     elif ctype == "line" and series:
-        # Multi-series trend (e.g. visit trends by state) — one line per category.
+        # Multi-series trend (e.g. IMF vs WB, or by country) — grouped bars with
+        # value labels, plus a thin line per series. Labels/bars drop out on long
+        # series so monthly multi-year charts stay readable.
         series_json = json.dumps(series, ensure_ascii=False)
-        jsx = f"""import {{ LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer }} from 'recharts';
+        n_pts = len(chart["data"])
+        show_bars = "true" if n_pts <= _BAR_OVERLAY_MAX else "false"
+        show_labels = "true" if n_pts * len(series) <= _LABEL_MAX else "false"
+        jsx = f"""import {{ ComposedChart, Bar, Line, LabelList, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer }} from 'recharts';
 const data = {data_json};
 const SERIES = {series_json};
+const SHOW_BARS = {show_bars};
+const SHOW_LABELS = {show_labels};
 {COLORS_JS}
 {fmt_fn}
 export default function Chart() {{
@@ -589,7 +598,7 @@ export default function Chart() {{
     <div style={{{{padding:'20px', background:'#1a1d2e', borderRadius:'12px', color:'#e2e8f0'}}}}>
       <h3 style={{{{marginBottom:'16px', fontSize:'15px', color:'#e2e8f0'}}}}>{title}</h3>
       <ResponsiveContainer width="100%" height={{420}}>
-        <LineChart data={{data}} margin={{{{top:10, right:30, left:20, bottom:60}}}}>
+        <ComposedChart data={{data}} margin={{{{top:20, right:30, left:20, bottom:60}}}}>
           <CartesianGrid strokeDasharray="3 3" stroke="#2d3748" />
           <XAxis dataKey="{x}"
             tickFormatter={{useMonthFmt ? formatMonth : (v => v)}}
@@ -600,19 +609,32 @@ export default function Chart() {{
             formatter={{(v, name) => [formatValue(v), name]}}
             contentStyle={{{{background:'#2d3748', border:'none', color:'#e2e8f0', borderRadius:'8px'}}}} />
           <Legend wrapperStyle={{{{color:'#a0aec0'}}}} />
+          {{SHOW_BARS && SERIES.map((s, i) => (
+            <Bar key={{'b' + s}} dataKey={{s}} fill={{COLORS[i % COLORS.length]}} fillOpacity={{0.45}}
+              radius={{[3,3,0,0]}} legendType="none">
+              {{SHOW_LABELS && <LabelList dataKey={{s}} position="top" formatter={{formatValue}}
+                style={{{{fill:'#e2e8f0', fontSize:10}}}} />}}
+            </Bar>
+          ))}}
           {{SERIES.map((s, i) => (
             <Line key={{s}} type="monotone" dataKey={{s}} stroke={{COLORS[i % COLORS.length]}}
               strokeWidth={{2}} dot={{{{r:3}}}} connectNulls />
           ))}}
-        </LineChart>
+        </ComposedChart>
       </ResponsiveContainer>
     </div>
   );
 }}"""
 
     elif ctype == "line":
-        jsx = f"""import {{ AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer }} from 'recharts';
+        # Single trend — bars with the value printed above each, line on top.
+        n_pts = len(chart["data"])
+        show_bars = "true" if n_pts <= _BAR_OVERLAY_MAX else "false"
+        show_labels = "true" if n_pts <= _LABEL_MAX else "false"
+        jsx = f"""import {{ ComposedChart, Bar, Line, LabelList, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer }} from 'recharts';
 const data = {data_json};
+const SHOW_BARS = {show_bars};
+const SHOW_LABELS = {show_labels};
 {fmt_fn}
 export default function Chart() {{
   const useMonthFmt = data.length > 0 && isMonthLabel(data[0]['{x}']);
@@ -620,13 +642,7 @@ export default function Chart() {{
     <div style={{{{padding:'20px', background:'#1a1d2e', borderRadius:'12px', color:'#e2e8f0'}}}}>
       <h3 style={{{{marginBottom:'16px', fontSize:'15px', color:'#e2e8f0'}}}}>{title}</h3>
       <ResponsiveContainer width="100%" height={{380}}>
-        <AreaChart data={{data}} margin={{{{top:10, right:30, left:20, bottom:60}}}}>
-          <defs>
-            <linearGradient id="colorVal{cid}" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stopColor="#63b3ed" stopOpacity={{0.3}} />
-              <stop offset="95%" stopColor="#63b3ed" stopOpacity={{0}} />
-            </linearGradient>
-          </defs>
+        <ComposedChart data={{data}} margin={{{{top:20, right:30, left:20, bottom:60}}}}>
           <CartesianGrid strokeDasharray="3 3" stroke="#2d3748" />
           <XAxis dataKey="{x}"
             tickFormatter={{useMonthFmt ? formatMonth : (v => v)}}
@@ -636,10 +652,15 @@ export default function Chart() {{
             labelFormatter={{useMonthFmt ? formatMonth : (v => v)}}
             formatter={{(v) => [formatValue(v), '{y}']}}
             contentStyle={{{{background:'#2d3748', border:'none', color:'#e2e8f0', borderRadius:'8px'}}}} />
-          <Area type="monotone" dataKey="{y}" stroke="#63b3ed" strokeWidth={{2}}
-            fill="url(#colorVal{cid})"
-            dot={{{{r:4, fill:'#63b3ed', stroke:'#1a1d2e', strokeWidth:2}}}} />
-        </AreaChart>
+          {{SHOW_BARS && (
+            <Bar dataKey="{y}" fill="#63b3ed" fillOpacity={{0.45}} radius={{[3,3,0,0]}}>
+              {{SHOW_LABELS && <LabelList dataKey="{y}" position="top" formatter={{formatValue}}
+                style={{{{fill:'#e2e8f0', fontSize:11}}}} />}}
+            </Bar>
+          )}}
+          <Line type="monotone" dataKey="{y}" stroke="#68d391" strokeWidth={{2}}
+            dot={{{{r:4, fill:'#68d391', stroke:'#1a1d2e', strokeWidth:2}}}} connectNulls />
+        </ComposedChart>
       </ResponsiveContainer>
     </div>
   );

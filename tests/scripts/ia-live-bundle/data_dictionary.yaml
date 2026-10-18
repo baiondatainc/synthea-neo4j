@@ -350,7 +350,7 @@ labels:
       end_date:
         description: end date (date)
   IAProduct:
-    description: Product in the Insurance Authority catalogue.
+    description: Product in the Department of Finance catalogue.
     properties:
       insurance_authority_product_id:
         description: insurance authority product id (string)

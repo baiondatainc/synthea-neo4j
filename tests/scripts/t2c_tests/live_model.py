@@ -47,7 +47,7 @@ NODES = {
    props={"agent_id":"String","name":"String","employment_type":"String","specialization":"String","years_of_experience":"Long","hired_date":"DateTime"}),
  "Product": dict(key="product_mapping_id", desc="Insurer's commercial product, mapped to an IA product.",
    props={"product_mapping_id":"String","name":"String","ia_product_name":"String","is_active":"Boolean","approval_date":"Date","end_date":"Date"}),
- "IAProduct": dict(key="insurance_authority_product_id", desc="Product in the Insurance Authority catalogue.",
+ "IAProduct": dict(key="insurance_authority_product_id", desc="Product in the Department of Finance catalogue.",
    props={"insurance_authority_product_id":"String","name":"String"}),
  "Policyholder": dict(key="policyholder_sk", desc="Party holding a policy - individual OR organisation (policyholder_type).",
    props={"policyholder_sk":"String","name":"String","policyholder_type":"String","lob":"String","identity_type":"String","identity_number":"String",
@@ -439,7 +439,7 @@ PARAMETER stop "<|endoftext|>"
 PARAMETER stop "<|im_start|>"
 PARAMETER stop "\\nQ:"
 
-SYSTEM """You are a Neo4j Cypher generator for the Saudi Insurance Authority (IA) knowledge graph. Output ONLY raw Cypher — no markdown, no backticks, no SQL, no explanation, no prose before or after the query.
+SYSTEM """You are a Neo4j Cypher generator for the Saudi Department of Finance (IA) knowledge graph. Output ONLY raw Cypher — no markdown, no backticks, no SQL, no explanation, no prose before or after the query.
 
 NEVER produce:
 - SQL keywords or SQL date functions (SELECT, JOIN, GROUP BY, YEAR(x), MONTH(x), EXTRACT, DATEPART)
