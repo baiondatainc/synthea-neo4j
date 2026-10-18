@@ -4,13 +4,14 @@ guardrails/input.py
 Input guardrail — checks an incoming question before it reaches the LLM.
 
 Checks (in order):
-  1. Aggregate/summary shortcut — always allowed (delegated to topics_ia)
+  1. Aggregate/summary shortcut — always allowed (delegated to topics_dof)
   2. Jailbreak / injection patterns — always blocked (domain-agnostic)
-  3. Topic allowlist — must match at least one IA topic (delegated to topics_ia)
+  3. Topic allowlist — must match at least one DoF topic (delegated to topics_dof)
 
-Domain-specific vocabulary lives in guardrails/topics_ia.py so that a schema
-change (add nodes/relationships to data_catalog.yaml) or a new insurance term
-doesn't require editing this file.
+Domain-specific vocabulary lives in guardrails/topics_dof.py so that a schema
+change (edit metadata/dictionary_overrides.yaml or regenerate
+metadata/data_dictionary.yaml) or a new macro / fiscal term doesn't require
+editing this file.
 
 Returns GuardrailResult(ok=True, payload=cleaned_question) on pass,
         GuardrailResult(ok=False, reason=...) on block.
@@ -21,7 +22,7 @@ import re
 import logging
 
 from guardrails import GuardrailResult
-from guardrails.topics_ia import (
+from guardrails.topics_dof import (
     BLOCK_MESSAGE,
     is_aggregate_bypass,
     matches_allowed_topic,
@@ -79,7 +80,7 @@ def check_input(question: str) -> GuardrailResult[str]:
             reason="This question appears to be a prompt injection attempt and has been blocked.",
         )
 
-    # 3. Topic allowlist (IA insurance domain).
+    # 3. Topic allowlist (DoF macro / fiscal domain).
     if not matches_allowed_topic(question):
         logger.info(f"input guardrail: no topic match — blocked: {question[:80]}")
         return GuardrailResult(

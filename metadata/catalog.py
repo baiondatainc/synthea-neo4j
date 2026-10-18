@@ -19,16 +19,38 @@ from typing import Any
 
 import yaml
 
-DICT_PATH = Path(__file__).parent / "data_dictionary.yaml"
+DICT_PATH          = Path(__file__).parent / "data_dictionary.yaml"
+OVERRIDES_PATH     = Path(__file__).parent / "dictionary_overrides.yaml"
+COUNTRY_NAMES_PATH = Path(__file__).parent / "country_names.yaml"
+
+# Column names in Cypher result rows that hold ISO alpha-3 country codes.
+# Values in these columns get translated via country_names.yaml by humanize_row.
+_COUNTRY_COLUMNS: frozenset[str] = frozenset({
+    "country", "country_code", "geo", "partner", "group_code",
+    "code",  # only when label_hint == "Country"
+})
+
+
+def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
+    """Recursively merge overlay into base. Overlay wins on scalars/lists;
+    nested dicts merge key-by-key."""
+    out = dict(base)
+    for k, v in (overlay or {}).items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _deep_merge(out[k], v)
+        else:
+            out[k] = v
+    return out
 
 
 class Catalog:
-    def __init__(self, doc: dict[str, Any]):
+    def __init__(self, doc: dict[str, Any], country_names: dict[str, str] | None = None):
         self._doc = doc
         self._labels: dict[str, dict] = doc.get("labels", {})
         self._rels: dict[str, dict]   = doc.get("relationships", {})
         self._topics: list[str]       = [t.lower() for t in doc.get("allowed_topics", [])]
         self._paths: dict[str, str]   = doc.get("common_paths", {})
+        self._country_names: dict[str, str] = country_names or {}
 
         # ── Config loaded from YAML (no hardcoding in Python) ────────────────
         budget_cfg                  = doc.get("token_budget", {})
@@ -80,6 +102,10 @@ class Catalog:
     def allowed_topics(self) -> list[str]:
         return self._topics
 
+    @property
+    def country_names(self) -> dict[str, str]:
+        return self._country_names
+
     # ── PII helpers ──────────────────────────────────────────────────────────
 
     def pii_properties(self, label: str) -> set[str]:
@@ -105,6 +131,17 @@ class Catalog:
             if isinstance(v, (int, float)) or v is None:
                 out[k] = v
                 continue
+
+            # Country-code translation (ISO alpha-3 → full name) via country_names.yaml
+            if self._country_names and isinstance(v, str):
+                kl = k.lower()
+                is_country_col = kl in _COUNTRY_COLUMNS and (
+                    kl != "code" or label_hint == "Country"
+                )
+                if is_country_col and v in self._country_names:
+                    out[k] = self._country_names[v]
+                    continue
+
             translated = v
             for label in self._labels:
                 if label_hint and label != label_hint:
@@ -504,8 +541,22 @@ Edit the YAML file and re-run <code>catalog.to_html()</code> to refresh.</p>
 @lru_cache(maxsize=1)
 def get_catalog() -> Catalog:
     with open(DICT_PATH, "r") as f:
-        doc = yaml.safe_load(f)
-    return Catalog(doc)
+        doc = yaml.safe_load(f) or {}
+
+    # Overlay curated edits from dictionary_overrides.yaml. Overrides win
+    # on scalars/lists; nested dicts (labels, relationships, token_budget,
+    # label_keywords, path_keywords, common_paths) merge key-by-key.
+    if OVERRIDES_PATH.exists():
+        with open(OVERRIDES_PATH, "r") as f:
+            overlay = yaml.safe_load(f) or {}
+        doc = _deep_merge(doc, overlay)
+
+    country_names: dict[str, str] = {}
+    if COUNTRY_NAMES_PATH.exists():
+        with open(COUNTRY_NAMES_PATH, "r") as f:
+            country_names = yaml.safe_load(f) or {}
+
+    return Catalog(doc, country_names=country_names)
 
 
 # ── CLI helper ────────────────────────────────────────────────────────────────

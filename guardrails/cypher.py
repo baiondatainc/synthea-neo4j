@@ -13,7 +13,7 @@ import re
 
 from config import get_settings
 from guardrails import GuardrailResult
-from guardrails.schema_ia import allowed_labels, allowed_relationships
+from guardrails.schema_dof import allowed_labels, allowed_relationships
 
 WRITE_CLAUSES = re.compile(
     r"\b(CREATE|DELETE|MERGE|SET|REMOVE|DROP|DETACH\s+DELETE)\b",
