@@ -18,7 +18,6 @@ RUN uv sync --frozen --no-dev --no-install-project --no-cache
 COPY main.py config.py ./
 COPY api ./api
 COPY graph ./graph
-COPY ingest ./ingest
 COPY qa ./qa
 COPY metadata ./metadata
 COPY guardrails ./guardrails
